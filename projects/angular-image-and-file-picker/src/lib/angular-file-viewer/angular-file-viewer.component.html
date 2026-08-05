@@ -1,0 +1,24 @@
+@if(safeUrl) {
+    <div class="angular-pdf-viewer">
+        @if(data.fileType == 'video') {
+            <mat-icon class="download-btn" (click)="downloadFile()" matTooltip="Download">download</mat-icon>
+            <!-- <button mat-icon-button color="primary" class="download-btn" >
+                <mat-icon>download</mat-icon>
+            </button> -->
+        }
+        @else {
+            <button mat-mini-fab color="primary" class="close-btn" (click)="onClose(null)" matTooltip="Close">
+                <mat-icon>clear</mat-icon>
+            </button>
+        }
+        @if(data.fileType == 'pdf') {
+            <angular-pdf-viewer [src]="safeUrl"></angular-pdf-viewer>
+        }
+        @else if(data.fileType == 'excel') {
+            <angular-excel-file-viewer [src]="safeUrl"></angular-excel-file-viewer>
+        }
+        @else if(data.fileType == 'video') {
+            <angular-video [src]="safeUrl"></angular-video>
+        }
+    </div>
+}

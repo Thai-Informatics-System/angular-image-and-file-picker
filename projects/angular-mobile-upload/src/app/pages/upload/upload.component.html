@@ -1,0 +1,298 @@
+<div class="upload-container">
+  <!-- Hidden file input -->
+  <input 
+    type="file" 
+    #fileInput 
+    [attr.multiple]="desktopFieldInfo()?.isMultiple ? true : null"
+    (change)="onFileSelected($event)" 
+    style="display: none;" 
+  />
+
+  <!-- Loading State -->
+  @if (isInitializing()) {
+    <div class="loading-state animate-fade-in">
+      <mat-spinner diameter="48" color="primary"></mat-spinner>
+      <h2>Connecting...</h2>
+      <p>Validating connection with desktop</p>
+      
+      <div class="action-buttons" style="margin-top: 20px;">
+        <button mat-raised-button color="accent" (click)="resetAndScan()">
+          <mat-icon>qr_code_scanner</mat-icon>
+          Scan New QR Code
+        </button>
+      </div>
+    </div>
+  }
+
+  <!-- Error State -->
+  @if (!isInitializing() && initError()) {
+    <div class="error-state animate-slide-up">
+      @if (!isScanning()) {
+        <!-- Default error view with scan option -->
+        <div class="error-icon">
+          <mat-icon>error_outline</mat-icon>
+        </div>
+        <h2>{{ isIntentionalDisconnect() ? 'Disconnected' : 'Connection Failed' }}</h2>
+        <p>{{ initError() }}</p>
+        
+        <div class="action-buttons">
+          <button mat-raised-button color="primary" (click)="startScanning()">
+            <mat-icon>qr_code_scanner</mat-icon>
+            Scan QR Code
+          </button>
+          @if (hasPreviousSession() && !isIntentionalDisconnect()) {
+            <button mat-stroked-button color="primary" (click)="retryConnection()">
+              <mat-icon>refresh</mat-icon>
+              Retry Last Connection
+            </button>
+          }
+        </div>
+
+        <p class="helper-text">
+          Open the desktop app and scan the QR code to connect.
+        </p>
+      } @else {
+        <!-- QR Scanner View -->
+        <div class="scanner-container">
+          <div class="scanner-header">
+            <h2>Scan QR Code</h2>
+            <button mat-icon-button (click)="stopScanning()">
+              <mat-icon>close</mat-icon>
+            </button>
+          </div>
+
+          <!-- Scanner -->
+          <div class="scanner-viewport">
+            <ngx-scanner-qrcode
+              #scanner="scanner"
+              [config]="{ fps: 30, vibrate: 100, isBeep: true }"
+              (event)="onScanSuccess($event)"
+            ></ngx-scanner-qrcode>
+            
+            <!-- Scanner overlay frame -->
+            <div class="scanner-frame">
+              <div class="corner top-left"></div>
+              <div class="corner top-right"></div>
+              <div class="corner bottom-left"></div>
+              <div class="corner bottom-right"></div>
+            </div>
+            
+            <!-- Camera switch button -->
+            @if (hasMultipleCameras()) {
+              <button mat-fab class="camera-switch-btn" (click)="switchCamera()" matTooltip="Switch Camera">
+                <mat-icon>cameraswitch</mat-icon>
+              </button>
+            }
+          </div>
+
+          @if (scanError()) {
+            <div class="scan-error">
+              <mat-icon>warning</mat-icon>
+              <span>{{ scanError() }}</span>
+            </div>
+          }
+
+          <p class="scanner-instructions">
+            Point your camera at the QR code displayed in the desktop app
+          </p>
+        </div>
+      }
+    </div>
+  }
+
+  <!-- Connected State -->
+  @if (!isInitializing() && !initError()) {
+    <div class="connected-state animate-slide-up">
+      <!-- Header with Connection Status -->
+      <div class="header">
+        <div class="connection-status">
+          <div class="status-dot" [class.connected]="isConnected()" [class.disconnected]="!isConnected()"></div>
+          <span>{{ isConnected() ? 'Connected' : 'Reconnecting...' }}</span>
+        </div>
+        <button mat-icon-button (click)="disconnect()" matTooltip="Disconnect">
+          <mat-icon>link_off</mat-icon>
+        </button>
+      </div>
+
+      <!-- Device IDs Display -->
+      @if (isConnected()) {
+        <div class="device-info-card">
+          <div class="device-row">
+            <div class="device-status-dot" [ngClass]="getMobileStatusClass()"></div>
+            <mat-icon class="device-icon mobile">smartphone</mat-icon>
+            <div class="device-details">
+              <span class="device-label">THIS DEVICE</span>
+              <span class="device-id">{{ formatDeviceId(mobileDeviceId()) }}</span>
+            </div>
+          </div>
+          <div class="connection-line">
+            <mat-icon>sync_alt</mat-icon>
+          </div>
+          <div class="device-row">
+            <div class="device-status-dot" [ngClass]="getDesktopStatusClass()"></div>
+            <mat-icon class="device-icon desktop">computer</mat-icon>
+            <div class="device-details">
+              <span class="device-label">CONNECTED TO DESKTOP</span>
+              <span class="device-id">{{ formatDeviceId(desktopDeviceId()) }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Transfer Status -->
+        @if (devicesStatus()) {
+          <div class="transfer-status" [class.ready]="isReadyForTransfer()" [class.not-ready]="!isReadyForTransfer()">
+            <mat-icon>{{ isReadyForTransfer() ? 'check_circle' : 'warning' }}</mat-icon>
+            <span>
+              @if (isReadyForTransfer()) {
+                Ready for transfer
+              } @else if (!devicesStatus()?.desktop?.isOnline) {
+                Desktop is offline
+              } @else {
+                This device is offline
+              }
+            </span>
+            <button mat-icon-button class="refresh-status-btn" (click)="refreshStatus()" [disabled]="isCheckingStatus()">
+              <mat-icon [class.spinning]="isCheckingStatus()">refresh</mat-icon>
+            </button>
+          </div>
+        }
+
+        <!-- Field Label from Desktop (if selected) -->
+        @if (desktopFieldInfo()?.label) {
+          <div class="field-label-card">
+            <mat-icon>label</mat-icon>
+            <span>Uploading to: <strong>{{ desktopFieldInfo()?.label }}</strong></span>
+          </div>
+
+          <!-- Instruction Message and Upload Button -->
+          @if (isReady() && !isUploading() && uploadedFiles().length === 0) {
+            <div class="instruction-message">
+              <mat-icon>info</mat-icon>
+              <span>
+                Tap the button below to select files. They will be uploaded and sent to your desktop.
+              </span>
+            </div>
+
+            <div class="upload-section">
+              <button mat-raised-button color="primary" class="upload-btn" (click)="openFileSelector()">
+                <mat-icon>{{ uploadType() === 'image' ? 'add_photo_alternate' : 'upload_file' }}</mat-icon>
+                <span>{{ uploadType() === 'image' ? 'Select Images' : 'Select Files' }}</span>
+              </button>
+            </div>
+          }
+        } @else {
+          <!-- Waiting for desktop to send field info -->
+          <div class="waiting-for-field">
+            <mat-icon class="waiting-icon">hourglass_empty</mat-icon>
+            <h3>Connected Successfully!</h3>
+            <p>Waiting for desktop to select an upload field...</p>
+            <p class="helper-text">Click on an upload field in the desktop app to start uploading from this device.</p>
+          </div>
+        }
+
+        <!-- Upload Progress -->
+        @if (isUploading()) {
+          <div class="upload-progress">
+            <mat-spinner diameter="32" color="primary"></mat-spinner>
+            <span>Uploading... {{ uploadProgress() }}%</span>
+            <mat-progress-bar mode="determinate" [value]="uploadProgress()"></mat-progress-bar>
+          </div>
+        }
+
+        <!-- Uploaded Files List -->
+        @if (uploadedFiles().length > 0) {
+          <div class="uploaded-files">
+            <h3>Uploaded Files ({{ uploadedFiles().length }})</h3>
+            <div class="file-list">
+              @for (file of uploadedFiles(); track file.s3Url; let i = $index) {
+                <div class="file-item">
+                  @if (isImageFile(file.mimeType)) {
+                    <img [src]="file.s3Url" alt="Uploaded image" class="file-thumbnail" />
+                  } @else {
+                    <mat-icon class="file-icon">description</mat-icon>
+                  }
+                  <div class="file-info">
+                    <span class="file-name">{{ file.fileName }}</span>
+                    <span class="file-size">{{ formatFileSize(file.size) }}</span>
+                  </div>
+                  <mat-icon class="sent-icon">check_circle</mat-icon>
+                </div>
+              }
+            </div>
+          </div>
+        }
+
+        <!-- Upload Stats -->
+        @if (hasUploads()) {
+          <div class="upload-stats">
+            <mat-icon>check_circle</mat-icon>
+            <span>{{ totalUploaded() }} file(s) sent to desktop</span>
+          </div>
+        }
+      }
+
+      <!-- Not Connected Message -->
+      @if (!isConnected()) {
+        <div class="not-connected-message">
+          @if (!isScanning()) {
+            <mat-icon>wifi_off</mat-icon>
+            <p>Waiting for connection...</p>
+            <div class="reconnect-actions">
+              <button mat-raised-button color="primary" (click)="retryConnection()">
+                <mat-icon>refresh</mat-icon>
+                Reconnect
+              </button>
+              <button mat-stroked-button color="primary" (click)="startScanning()">
+                <mat-icon>qr_code_scanner</mat-icon>
+                Scan New QR
+              </button>
+            </div>
+          } @else {
+            <!-- Inline QR Scanner -->
+            <div class="scanner-container inline-scanner">
+              <div class="scanner-header">
+                <h3>Scan QR Code</h3>
+                <button mat-icon-button (click)="stopScanning()">
+                  <mat-icon>close</mat-icon>
+                </button>
+              </div>
+
+              <div class="scanner-viewport">
+                <ngx-scanner-qrcode
+                  #scanner="scanner"
+                  [config]="{ fps: 30, vibrate: 100, isBeep: true }"
+                  (event)="onScanSuccess($event)"
+                ></ngx-scanner-qrcode>
+                
+                <div class="scanner-frame">
+                  <div class="corner top-left"></div>
+                  <div class="corner top-right"></div>
+                  <div class="corner bottom-left"></div>
+                  <div class="corner bottom-right"></div>
+                </div>
+                
+                <!-- Camera switch button -->
+                @if (hasMultipleCameras()) {
+                  <button mat-fab class="camera-switch-btn" (click)="switchCamera()" matTooltip="Switch Camera">
+                    <mat-icon>cameraswitch</mat-icon>
+                  </button>
+                }
+              </div>
+
+              @if (scanError()) {
+                <div class="scan-error">
+                  <mat-icon>warning</mat-icon>
+                  <span>{{ scanError() }}</span>
+                </div>
+              }
+
+              <p class="scanner-instructions">
+                Point your camera at the QR code
+              </p>
+            </div>
+          }
+        </div>
+      }
+    </div>
+  }
+</div>

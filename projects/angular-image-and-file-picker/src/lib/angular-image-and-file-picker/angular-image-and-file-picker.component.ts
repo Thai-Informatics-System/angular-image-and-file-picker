@@ -1,0 +1,1847 @@
+import { Component, EventEmitter, Input, Output, SimpleChanges, OnDestroy } from '@angular/core';
+import { AngularFileViewerComponent } from '../angular-file-viewer/angular-file-viewer.component';
+import type { DialogConfig, FileViewerDialogData, FileViewerFileType, OptionConfig, UrlConfig, AngularRemoteUploadConfig, AngularRemoteUploadEvent } from '../interfaces';
+import { AngularPreviewImageComponent } from '../angular-preview-image/angular-preview-image.component';
+import { BehaviorSubject, Observable, Subject, map, sequenceEqual, shareReplay, takeUntil } from 'rxjs';
+import { MatDialog } from '@angular/material/dialog';
+import { BreakpointObserver, Breakpoints } from '@angular/cdk/layout';
+import { AngularHelperService } from '../services/angular-helper.service';
+import { AngularConfirmationDialogComponent } from '../angular-confirmation-dialog/angular-confirmation-dialog.component';
+import { AngularQrCodeDialogComponent, AngularQrCodeDialogData } from '../angular-qr-code-dialog/angular-qr-code-dialog.component';
+import { AngularViewConnectionDialogComponent } from '../angular-view-connection-dialog/angular-view-connection-dialog.component';
+import { AngularCameraCaptureDialogComponent, CameraCaptureDialogData, CameraCaptureResult } from '../angular-camera-capture-dialog/angular-camera-capture-dialog.component';
+import { AngularRemoteUploadService } from '../services/angular-remote-upload.service';
+import { Config } from '../interfaces/config.type';
+import { CdkDragDrop, CdkDragMove, moveItemInArray } from '@angular/cdk/drag-drop';
+
+const generateRandomString = (length: number): string => {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let result = '';
+  
+  for (let i = 0; i < length; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+
+  return result;
+}
+
+@Component({
+  selector: 'angular-image-and-file-picker',
+  standalone: false,
+  templateUrl: './angular-image-and-file-picker.component.html',
+  styleUrl: './angular-image-and-file-picker.component.css'
+})
+export class AngularImageAndFilePickerComponent implements OnDestroy {
+  private changeSubject = new BehaviorSubject<boolean>(false);
+  private destroy$ = new Subject<void>();
+
+  @Input({required: true}) urlConfig!: UrlConfig;
+  @Input() entityType!: string;
+  @Input() entityId: any;
+  @Input() viewType: 'card' | 'list' | 'compact' = 'card';
+  @Input() type: 'image' | 'file' = 'image';
+  @Input() label: string | null = null;
+  @Input() disabled: boolean = false;
+  @Input() data: any;
+  @Input() hint: string | null = null;
+  @Input() accept: string = '';
+  @Input() isValidateMimeType: boolean = true;
+  @Input() selectedId: any = null;
+  @Input() options: OptionConfig | null = null;
+  @Input() required: boolean = false;
+  @Input() previewOnly: boolean = false;
+  @Input() previewInFlex: boolean = false;
+  @Input() imageItemClass: string = '';
+  @Input() isAddUploadedFileInLastNode: boolean = false;
+  @Input() isEnableDeleteConfirmation: boolean = true;
+  @Input() isEnableCapture: boolean = false;
+  @Input() deleteConfirmationMsg!: string;
+  @Input() dialogConfig!: DialogConfig;
+  @Input() enableDragNDropForUpload: boolean = false;
+  
+  // Remote Upload Configuration
+  @Input() remoteUploadConfig: AngularRemoteUploadConfig | null = null;
+  
+  @Output() uploadInProgress = new EventEmitter();
+  @Output() onUploaded = new EventEmitter();
+  @Output() onFileSelect = new EventEmitter<any>();
+  @Output() onFileRemoved = new EventEmitter<any>();
+  @Output() onError = new EventEmitter();
+  @Output() onRemoteUpload = new EventEmitter<AngularRemoteUploadEvent>();
+
+  @Input() isShowImageSequence: boolean = false;
+  @Input() enableDragNDrop: boolean = false;
+  @Input() editTagButtonWhenDisabled: boolean = false;
+  @Input() showDeleteButtonWhenDisabled: boolean = false;
+  @Output() dataSequenceChange = new EventEmitter<any>();
+
+  isMobile = false;
+  isTab = false;
+
+  // Mobile upload state
+  isWaitingForMobileUpload = false;
+  mobileUploadFieldLabel: string = '';
+  
+  // Pending files from mobile (waiting to be accepted/rejected)
+  pendingFiles: AngularRemoteUploadEvent[] = [];
+
+  isHandset$!: Observable<boolean>;
+  isTab$!: Observable<boolean>;
+
+
+  config: Config = {
+    isCompressed: false,
+    hiddenDeleteBtn: false,
+    hiddenPreview: false,
+    selectionMode: false,
+    isStoredDb: false,
+    isMultiple: false,
+    limit: 10,
+    cols: 5,
+    colsForTab: 5,
+    colsForMobile: 3,
+    height: '130px',
+    selectorId: generateRandomString(10),
+    enableImageTags: false,
+    useAdvancedCamera: true // Enable advanced camera modal by default
+  };
+
+  isSliderLoaded = true;
+
+  filesArray: any[] = [
+    // {
+    //   "s3Url": "https://obk-servicemind-uat-resources.s3.ap-southeast-1.amazonaws.com/parcel_create/da226bf2-4e5f-4180-94d8-6746b1ce139b.jpg",
+    //   "uploadData": {
+    //       "isBase64Encoded": false,
+    //       "headers": {
+    //           "Access-Control-Allow-Origin": "*"
+    //       },
+    //       "uploadURL": "https://obk-servicemind-uat-resources.s3.ap-southeast-1.amazonaws.com/parcel_create/da226bf2-4e5f-4180-94d8-6746b1ce139b.jpg?Content-Type=image%2Fjpeg&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIA37VN5NQI5HY4VFVN%2F20220617%2Fap-southeast-1%2Fs3%2Faws4_request&X-Amz-Date=20220617T152621Z&X-Amz-Expires=900&X-Amz-Signature=4004cfb10a740b9623d486de992a06f53b458ed6fc151c092eea88a3059eae8f&X-Amz-SignedHeaders=host%3Bx-amz-acl&x-amz-acl=public-read",
+    //       "photoFilename": "f7a32cd0-d0c1-474a-838e-47402d80527a.jpeg",
+    //       "fileName": "1452664590074.jpeg",
+    //       "uploadPath": "/survey_orders/f7a32cd0-d0c1-474a-838e-47402d80527a.jpeg",
+    //       "resourceUrl": "https://obk-servicemind-uat-resources.s3.ap-southeast-1.amazonaws.com/parcel_create/da226bf2-4e5f-4180-94d8-6746b1ce139b.jpg"
+    //   }
+    // },
+    // {
+    //   "s3Url": "https://obk-servicemind-uat-resources.s3.ap-southeast-1.amazonaws.com/parcel_create/31033a2a-5db6-450d-a541-58a94654dd0c.jpg",
+    //   "uploadData": {
+    //       "isBase64Encoded": false,
+    //       "headers": {
+    //           "Access-Control-Allow-Origin": "*"
+    //       },
+    //       "uploadURL": "https://servicemind-resources-staging.s3.ap-southeast-1.amazonaws.com/survey_orders/6c537889-c72a-48ca-9134-638e8d6a1aac.sql?Content-Type=application%2Fsql&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIA37VN5NQI5HY4VFVN%2F20220617%2Fap-southeast-1%2Fs3%2Faws4_request&X-Amz-Date=20220617T152641Z&X-Amz-Expires=900&X-Amz-Signature=bcdf347df2a6495615bf48d619492e1deac2264231161da5dc3becaa7f45a796&X-Amz-SignedHeaders=host%3Bx-amz-acl&x-amz-acl=public-read",
+    //       "photoFilename": "6c537889-c72a-48ca-9134-638e8d6a1aac.sql",
+    //       "fileName": "eccom_bermuda.sql",
+    //       "uploadPath": "/survey_orders/6c537889-c72a-48ca-9134-638e8d6a1aac.sql",
+    //       "resourceUrl": "https://servicemind-resources-staging.s3.ap-southeast-1.amazonaws.com/survey_orders/6c537889-c72a-48ca-9134-638e8d6a1aac.sql"
+    //   }
+    // },
+    // {
+    //   "s3Url": "https://obk-servicemind-uat-resources.s3.ap-southeast-1.amazonaws.com/parcel_create/b8424185-30c6-4f44-ba1e-ff616dfd6576.jpg",
+    //   "uploadData": {
+    //       "isBase64Encoded": false,
+    //       "headers": {
+    //           "Access-Control-Allow-Origin": "*"
+    //       },
+    //       "uploadURL": "https://servicemind-resources-staging.s3.ap-southeast-1.amazonaws.com/survey_orders/232f2548-dc93-4204-8835-86b69f3005a7.pdf?Content-Type=application%2Fpdf&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIA37VN5NQI5HY4VFVN%2F20220617%2Fap-southeast-1%2Fs3%2Faws4_request&X-Amz-Date=20220617T152656Z&X-Amz-Expires=900&X-Amz-Signature=85643479c3fbecc5bd1fee9783e3cb72e27e16a034921b52cf2f377eefb01ff9&X-Amz-SignedHeaders=host%3Bx-amz-acl&x-amz-acl=public-read",
+    //       "photoFilename": "232f2548-dc93-4204-8835-86b69f3005a7.pdf",
+    //       "fileName": "print-registration-4x6.pdf",
+    //       "uploadPath": "/survey_orders/232f2548-dc93-4204-8835-86b69f3005a7.pdf",
+    //       "resourceUrl": "https://servicemind-resources-staging.s3.ap-southeast-1.amazonaws.com/survey_orders/232f2548-dc93-4204-8835-86b69f3005a7.pdf"
+    //   }
+    // }
+  ];
+  currentEntityId!: number;
+  currentEntityType!: string;
+  images = [];
+  loading = false;
+  status = false;
+
+
+  constructor(
+    public dialog: MatDialog,
+    private helper: AngularHelperService,
+    private breakpointObserver: BreakpointObserver,
+    private remoteUploadService: AngularRemoteUploadService
+  ) { }
+
+  ngOnInit() {
+    this.isHandset$ = this.breakpointObserver.observe([Breakpoints.Handset])
+      .pipe(
+        map(result => result.matches),
+        shareReplay()
+      );
+
+    this.isTab$ = this.breakpointObserver.observe([Breakpoints.TabletPortrait])
+      .pipe(
+        map(result => result.matches),
+        shareReplay()
+      );
+    
+    this.prepareConfig();
+
+    // Initialize remote upload if configured
+    this.initRemoteUpload();
+
+    // if(this.viewType == 'single-card'){
+    //   this.generateFilesForSingleCard();
+    // }
+  }
+
+  ngAfterViewInit() {
+    this.isHandset$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(r => {
+        console.log('IS HANDSET:', r);
+        this.isMobile = r;
+        this.changeSubject.next(true);
+      });
+    
+    this.isTab$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(r => {
+        console.log('IS TAB:', r);
+        this.isTab = r;
+        this.changeSubject.next(true);
+      });
+
+    this.changeSubject
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(status => {
+        let cols = 1;
+        if (this.isMobile) {
+          cols = this.options?.colsForMobile ?? 3;
+        }
+        else if (this.isTab) {
+          cols = this.options?.colsForTab ?? 4;
+        }
+        else {
+          cols = this.options?.cols ?? 5;
+        }
+
+        this.config.cols = cols;
+      });
+  }
+
+  ngOnChanges(changes: SimpleChanges) {
+    if (changes['entityId']) {
+      this.currentEntityId = changes['entityId'].currentValue;
+    }
+    if (changes['entityType']) {
+      this.currentEntityType = changes['entityType'].currentValue;
+    }
+    if (changes['urlConfig']) {
+      this.urlConfig = changes['urlConfig'].currentValue;
+      this.config.isStoredDb = false;
+      if (this.urlConfig?.attachToEntity) {
+        this.config.isStoredDb = true;
+      }
+    }
+    if (changes['options']) {
+      this.prepareConfig();
+    }
+    if (changes['data']) {
+      const incomingData = changes['data']?.currentValue ?? [];
+      
+      // Safety check: ensure filesArray is initialized
+      if (!this.filesArray) {
+        this.filesArray = [];
+      }
+      
+      // Merge with existing, avoiding duplicates by s3Url
+      const existingUrls = new Set(
+        this.filesArray
+          .filter((f: any) => f && f.s3Url) // Filter out null/undefined
+          .map((f: any) => f.s3Url)
+      );
+      const newFiles = incomingData.filter((f: any) => f && f.s3Url && !existingUrls.has(f.s3Url));
+      
+      // If new files exist or filesArray is empty, update with incoming data
+      // If all incoming files already exist, keep the existing filesArray
+      if (newFiles.length > 0 || this.filesArray.length === 0) {
+        this.filesArray = incomingData.map((r: any) => {
+          if (r) {
+            r.loading = false;
+          }
+          return r;
+        });
+        console.log("this.filesArray", this.filesArray);
+      } else {
+        console.log("this.filesArray - skipped duplicate data update");
+      }
+    }
+    if(changes['viewType'] && changes['viewType'].currentValue == 'compact'){
+      this.config.limit = 1;
+      this.config.isMultiple = false;
+    }
+    if (changes['remoteUploadConfig']) {
+      this.initRemoteUpload();
+    }
+  }
+
+  prepareConfig() {
+    if (this.options?.isCompressed) {
+      this.config.isCompressed = this.options?.isCompressed;
+    }
+
+    if (this.options?.isSliderPreview) {
+      this.config.isSliderPreview = this.options?.isSliderPreview;
+    }
+
+    if (this.options?.hiddenDeleteBtn) {
+      this.config.hiddenDeleteBtn = this.options?.hiddenDeleteBtn;
+    }
+
+    if (this.options?.hiddenPreview) {
+      this.config.hiddenPreview = this.options?.hiddenPreview;
+    }
+
+    if (this.options?.selectionMode) {
+      this.config.selectionMode = this.options?.selectionMode;
+    }
+
+    this.config.isStoredDb = false;
+    if (this.urlConfig?.attachToEntity) {
+      this.config.isStoredDb = true;
+    }
+
+    if (this.options?.isMultiple) {
+      this.config.isMultiple = this.options?.isMultiple;
+      if(this.viewType == 'compact'){
+        this.config.isMultiple = false;
+      }
+    }
+
+    if (this.options?.fileSize) {
+      this.config.fileSize = this.options?.fileSize;
+    }
+
+    if (this.options?.limit) {
+      this.config.limit = this.options?.limit;
+      if (this.viewType == 'compact') {
+        this.config.limit = 1;
+      }
+    }
+
+    if (this.options?.cols) {
+      this.config.cols = this.options?.cols;
+    }
+
+    if (this.options?.colsForTab) {
+      this.config.colsForTab = this.options?.colsForTab;
+    }
+
+    if (this.options?.colsForMobile) {
+      this.config.colsForMobile = this.options?.colsForMobile;
+    }
+
+    if (this.options?.height) {
+      this.config.height = this.options?.height;
+    }
+
+    if (this.options?.selectorId) {
+      this.config.selectorId = this.options?.selectorId;
+    }
+
+    if (this.options?.enableImageTags) {
+      this.config.enableImageTags = this.options?.enableImageTags;
+    }
+
+    if (this.options?.useAdvancedCamera !== undefined) {
+      this.config.useAdvancedCamera = this.options?.useAdvancedCamera;
+    }
+  }
+
+  /**
+   * Validates selected files against the accept parameter
+   * @param files - FileList of selected files
+   * @returns boolean - true if all files are valid, false otherwise
+   */
+  private validateFileTypes(files: FileList): boolean {
+    if (!this.accept || this.accept.trim() === '') {
+      return true; // No validation needed if accept is not specified
+    }
+
+    const acceptedTypes = this.accept.split(',').map(type => type.trim().toLowerCase());
+    const invalidFiles: string[] = [];
+    
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const fileExtension = '.' + file.name.split('.').pop()?.toLowerCase();
+      const fileMimeType = file.type.toLowerCase();
+      
+      let isValid = false;
+      
+      for (const acceptType of acceptedTypes) {
+        if (acceptType.startsWith('.')) {
+          // Extension match (e.g., .jpg, .png)
+          if (acceptType === fileExtension) {
+            isValid = true;
+            break;
+          }
+        } else if (acceptType.includes('/*')) {
+          // MIME type wildcard match (e.g., image/*, video/*)
+          const mimePrefix = acceptType.split('/')[0];
+          if (fileMimeType.startsWith(mimePrefix + '/')) {
+            isValid = true;
+            break;
+          }
+        } else if (acceptType.includes('/')) {
+          // Exact MIME type match (e.g., image/jpeg, application/pdf)
+          if (acceptType === fileMimeType) {
+            isValid = true;
+            break;
+          }
+        }
+      }
+      
+      if (!isValid) {
+        invalidFiles.push(file.name);
+      }
+    }
+    
+    if (invalidFiles.length > 0) {
+      const acceptedTypesStr = acceptedTypes.join(', ');
+      const invalidFilesStr = invalidFiles.join(', ');
+      this.helper.showErrorMsg(
+        `Invalid file type(s): ${invalidFilesStr}. Only ${acceptedTypesStr} files are allowed.`, 
+        'Error', 
+        5000
+      );
+      return false;
+    }
+    
+    return true;
+  }
+
+  setSliderLoading() {
+    this.isSliderLoaded = false;
+    setTimeout(() => {
+      this.isSliderLoaded = true;
+    }, 20);
+  }
+
+  /**
+   * Handle click on the upload label - only trigger file selection if not clicking on mobile upload buttons
+   */
+  handleLabelClick(event: MouseEvent) {
+    if (this.loading) {
+      return;
+    }
+
+    // Check if the click is on or inside the mobile upload actions container or buttons
+    const target = event.target as HTMLElement;
+    const clickedOnMobileActions = target.closest('.mobile-upload-actions');
+    const clickedOnButton = target.closest('button');
+    
+    // If clicked on mobile upload actions or any button, don't trigger file selection
+    if (clickedOnMobileActions || clickedOnButton) {
+      return;
+    }
+
+    // Otherwise, proceed with normal file selection behavior
+    if (this.type === 'image' && this.isEnableCapture) {
+      this.openCameraCapture();
+    } else {
+      this.openImageSelector();
+    }
+  }
+
+  openImageSelector(selectorId: string = this.config?.selectorId) {
+    document.getElementById(selectorId)?.click();
+  }
+
+  async openCameraCapture() {
+    // Check configuration preference and browser support
+    if (this.config.useAdvancedCamera && typeof navigator !== 'undefined' && navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function') {
+      try {
+        // Try to open camera directly using MediaDevices API
+        await this.openCameraDialog();
+      } catch (error) {
+        console.log('MediaDevices API failed, falling back to file input:', error);
+        // Fallback to file input method
+        this.openImageSelector();
+      }
+    } else {
+      // Use simple file input method (works on most browsers including mobile)
+      this.openImageSelector();
+    }
+  }
+
+
+
+
+
+  private async openCameraDialog() {
+    try {
+      // Get available cameras first
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoDevices = devices.filter(device => device.kind === 'videoinput');
+      
+      // Request camera access
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          facingMode: 'environment', // Prefer rear camera
+          width: { ideal: this.isMobile ? 720 : 1920 },
+          height: { ideal: this.isMobile ? 480 : 1080 }
+        } 
+      });
+
+      // Create a modal dialog with video preview and capture button
+      this.showCameraModal(stream, videoDevices);
+
+    } catch (error: any) {
+      console.error('Error accessing camera:', error);
+      
+      if (error.name === 'NotAllowedError') {
+        this.helper.showErrorMsg('Camera access denied. Please allow camera access and try again.', 'Error', 3000);
+      } else if (error.name === 'NotFoundError') {
+        this.helper.showErrorMsg('No camera found. Please use file upload instead.', 'Error', 3000);
+      } else {
+        this.helper.showErrorMsg('Could not access camera. Falling back to file upload.', 'Error', 3000);
+        this.openImageSelector();
+      }
+      throw error;
+    }
+  }
+
+  private showCameraModal(stream: MediaStream, videoDevices?: MediaDeviceInfo[]) {
+    const dialogData: CameraCaptureDialogData = {
+      stream,
+      videoDevices,
+      isMobile: this.isMobile
+    };
+
+    const dialogRef = this.dialog.open(AngularCameraCaptureDialogComponent, {
+      data: dialogData,
+      panelClass: 'camera-capture-dialog',
+      maxWidth: '100vw',
+      maxHeight: '100vh',
+      width: '100%',
+      height: '100%',
+      hasBackdrop: true,
+      disableClose: false
+    });
+
+    dialogRef.afterClosed().subscribe(async (result: CameraCaptureResult) => {
+      // Stop stream if dialog was closed
+      stream.getTracks().forEach(track => track.stop());
+
+      if (!result) {
+        return; // User closed dialog without action
+      }
+
+      if (result.action === 'capture' && result.file) {
+        // Create a fake event to pass to detectImages
+        const fakeEvent = {
+          target: {
+            files: [result.file],
+            value: ''
+          },
+          preventDefault: () => {}
+        };
+
+        // Process the captured image
+        await this.detectImages(fakeEvent);
+      } else if (result.action === 'upload') {
+        // Open file selector
+        this.openImageSelector();
+      }
+      // 'cancel' action - do nothing, just close
+    });
+  }
+
+  async detectImages(event: any, index: number = -1) {
+    console.log('detectImages:', event);
+    event.preventDefault();
+
+    if (this.config?.limit === 1) {
+      this.filesArray = []; // Reset array for a single image
+    }
+
+    const files = event.target.files;
+    if (!files) {
+      this.helper.showErrorMsg('Please select an image', 'Error', 3000);
+      return;
+    }
+
+    // Validate file types based on accept parameter
+    if (this.isValidateMimeType && !this.validateFileTypes(files)) {
+      return;
+    }
+
+    if ((this.filesArray?.length + files.length) > this.config?.limit) {
+      this.helper.showErrorMsg(`You can upload a maximum of ${this.config?.limit} images`, 'Error', 3000);
+      return;
+    }
+
+    this.loading = true;
+    this.uploadInProgress.emit(true);
+
+    let uploadedImages: any[] = [];
+
+    // Pre-allocate slots in filesArray to avoid race conditions
+    const startIndex = this.filesArray.length;
+    const placeholders = [...files].map((file, idx) => ({
+      tempId: `temp-${Date.now()}-${idx}`,
+      title: file.name,
+      name: file.name,
+      loading: true,
+      filename: file.name,
+      s3Url: '', // Will be filled during processing
+      sequence: this.isAddUploadedFileInLastNode ? startIndex + idx + 1 : this.filesArray.length + 1 - idx
+    }));
+
+    // Add all placeholders at once to prevent race conditions
+    if (this.isAddUploadedFileInLastNode) {
+      this.filesArray = [...this.filesArray, ...placeholders];
+    } else {
+      this.filesArray = [...placeholders.reverse(), ...this.filesArray];
+    }
+    this.setSliderLoading();
+
+    // Process all images concurrently with their pre-assigned indices
+    await Promise.all([...files].map((file, idx) => {
+      const targetIndex = this.isAddUploadedFileInLastNode ? startIndex + idx : idx;
+      return this.processImage(file, uploadedImages, targetIndex, placeholders[this.isAddUploadedFileInLastNode ? idx : files.length - 1 - idx].tempId);
+    }));
+
+    if (this.config?.isStoredDb) {
+      await this.uploadImages(uploadedImages);
+    }
+
+    this.loading = false;
+    this.uploadInProgress.emit(false);
+
+    this.onSubmit(); // Call once after all uploads
+    this.updateSequence();
+
+    
+    // Reset the input value so the same file can be selected again
+    event.target.value = '';
+  }
+
+  async processImage(file: File, uploadedImages: any[], index: number, tempId?: string) {
+    let fileSize = file.size / 1024;
+    if (this.config?.fileSize && fileSize > this.config?.fileSize) {
+      let maxSize = this.config.fileSize / 1024;
+      this.helper.showErrorMsg(`File size must be ≤ ${maxSize >= 1 ? maxSize : this.config.fileSize} ${maxSize >= 1 ? 'MB' : 'KB'}`, 'Error', 3000);
+      return;
+    }
+
+    // ponytail: iOS Safari often PUT 0-byte bodies if the original <input> File is
+    // uploaded after FileReader / async gaps. Snapshot bytes into a stable File first.
+    const mimeType = file.type || this.getMimeTypeFromFileName(file.name) || 'image/jpeg';
+    let fileBytes: ArrayBuffer;
+    try {
+      fileBytes = await file.arrayBuffer();
+    } catch (error: any) {
+      this.helper.showHttpErrorMsg(error);
+      return;
+    }
+
+    if (!fileBytes || fileBytes.byteLength === 0) {
+      this.helper.showErrorMsg('Unable to read image data. Please try again.', 'Error', 3000);
+      return;
+    }
+
+    const stableFile = new File([fileBytes], file.name || `image.${this.getExtensionFromMimeType(mimeType)}`, { type: mimeType });
+    let fileToUpload: File | Blob = this.config?.isCompressed
+      ? await this.helper.compressFile(stableFile, mimeType)
+      : stableFile;
+
+    try {
+      let uploadResponse = await this.helper.getUploadUrl(this.urlConfig.getUploadUrl, stableFile.name, mimeType, this.currentEntityType).toPromise();
+      let uploadData = uploadResponse.data.uploadUrlData;
+
+      // For initial display, use a data URL for preview but ensure S3 URL is used for database
+      let dataUrl = await this.helper.getDataUrlFromFile(stableFile);
+
+      let currentImageData = {
+        tempId: tempId || `temp-${Date.now()}`,
+        title: stableFile.name, name: stableFile.name, s3Url: dataUrl, // Temporary preview URL
+        filename: stableFile.name, s3Path: uploadData.uploadPath,
+        tempS3Url: uploadData.resourceUrl, // This will be the final S3 URL
+        id: null,
+        uploadData: uploadData, loading: true,  // Set loading to true initially
+        tags: null, tempTags: null, isEditMode: false, sequence: 1,
+      };
+
+      // Update the file at the pre-assigned index
+      if(index !== -1 && this.filesArray[index]) {
+        this.filesArray[index] = {...this.filesArray[index], ...currentImageData};
+      }
+
+      this.setSliderLoading();
+      uploadedImages.push(currentImageData);
+
+      // Upload to S3 (stable Blob/File — not the original iOS File handle)
+      await this.helper.putFile(uploadData.uploadURL, fileToUpload, mimeType).toPromise();
+
+      // After successful upload, update with S3 URL and mark as completed
+      if(index !== -1 && this.filesArray[index]) {
+        this.filesArray[index].s3Url = uploadData.resourceUrl; // Use S3 URL
+        this.filesArray[index].loading = false;
+        // Ensure uploadData contains the correct S3 URL for database storage
+        this.filesArray[index].uploadData.resourceUrl = uploadData.resourceUrl;
+      }
+      this.setSliderLoading();
+    } catch (error: any) {
+      // Set loading to false on error as well
+      if(index !== -1 && this.filesArray[index]) {
+        this.filesArray[index].loading = false;
+      }
+      this.helper.showHttpErrorMsg(error);
+    }
+  }
+
+  private getMimeTypeFromFileName(fileName: string): string {
+    const ext = fileName?.split('.').pop()?.toLowerCase() || '';
+    const map: Record<string, string> = {
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      png: 'image/png',
+      gif: 'image/gif',
+      webp: 'image/webp',
+      bmp: 'image/bmp',
+      heic: 'image/heic',
+      heif: 'image/heif',
+    };
+    return map[ext] || '';
+  }
+
+  private getExtensionFromMimeType(mimeType: string): string {
+    const map: Record<string, string> = {
+      'image/jpeg': 'jpg',
+      'image/png': 'png',
+      'image/gif': 'gif',
+      'image/webp': 'webp',
+      'image/bmp': 'bmp',
+      'image/heic': 'heic',
+      'image/heif': 'heif',
+    };
+    return map[mimeType.toLowerCase()] || 'jpg';
+  }
+
+  uploadImages(data: any) {
+    return new Promise((resolve, reject) => {
+      if (data && data?.length > 0) {
+        console.log('There is a image pending to attach:', data);
+
+        // Keep track of tempIds for matching after API response
+        let tempIdMapping: any[] = [];
+        let images: any[] = [];
+        let fa = data.map((r: any) => {
+          if (r?.uploadData) {
+            // Ensure we're using the S3 URL, not base64 data
+            const s3Url = r.uploadData.resourceUrl;
+            // Store tempId separately for matching, don't send it to API
+            tempIdMapping.push({
+              tempId: r.tempId,
+              resourceUrl: s3Url
+            });
+            images.push({ 
+              fileName: r.uploadData?.fileName, 
+              resourceUrl: s3Url, // This ensures S3 URL is stored in database
+              uploadPath: r.uploadData?.uploadPath, 
+              uploadURL: r.uploadData?.uploadURL
+              // tempId removed - not sent to API
+            });
+          }
+          return r;
+        });
+
+        this.helper.attachFilesToEntity(this.urlConfig?.attachToEntity || 'not-specified', { images: images, entityId: this.currentEntityId, entityType: this.currentEntityType }, this.config.limit).subscribe({
+          next: (ir: any) => {
+            ir?.data?.map((file: any, idx: number) =>{
+              // Match by tempId first (more reliable for concurrent uploads), then fall back to S3 URL
+              const uploadedImage = tempIdMapping[idx];
+              let selectedIndex = this.filesArray?.findIndex(f => f.tempId === uploadedImage?.tempId);
+              
+              // Fallback to resourceUrl matching if tempId matching fails
+              if(selectedIndex === -1) {
+                selectedIndex = this.filesArray?.findIndex(f => f.uploadData?.resourceUrl == file.s3Url);
+              }
+              
+              if(selectedIndex !== -1){
+                this.filesArray[selectedIndex] = {
+                  ...this.filesArray[selectedIndex], 
+                  loading: false, 
+                  id: file?.id || null,
+                  s3Url: file.s3Url // Ensure we're using the S3 URL from the response
+                }
+              }
+            });
+            this.onSubmit();
+            resolve(ir);
+          },
+          error: (imErr: any) => { this.helper.showHttpErrorMsg(imErr); this.onError.emit(true); resolve(false); }
+        });
+
+      } else {
+        resolve(false);
+      }
+    });
+  }
+
+  deleteImage(event: any, t: any, index: number, img: any) {
+    event.stopPropagation();
+    if (this.isEnableDeleteConfirmation) {
+      let confirmBoxData: DialogConfig = {
+        title: this.dialogConfig?.title || 'Delete Image',
+        message: this.deleteConfirmationMsg || (this.dialogConfig?.message || 'Are you sure, you want to delete this image?'),
+        iconClass: this.dialogConfig?.iconClass || 'angular-text-danger',
+        icon: this.dialogConfig?.icon || 'delete',
+        approveButtonText: this.dialogConfig?.approveButtonText || 'Yes, delete',
+        approveButtonClass: `angular-approve-button ${this.dialogConfig?.approveButtonClass}`,
+        cancelButtonText: this.dialogConfig?.cancelButtonText || 'No',
+        cancelButtonClass: `angular-cancel-button ${this.dialogConfig?.cancelButtonClass}`
+      };
+
+      const panelClass = ['angular-confirmation-dialog'];
+      if(this.dialogConfig?.panelClass){
+        panelClass.push(this.dialogConfig.panelClass);
+      }
+
+      const dialogRef = this.dialog.open(AngularConfirmationDialogComponent, {
+        width: "450px",
+        panelClass: panelClass,
+        data: confirmBoxData,
+        disableClose: true,
+      });
+
+      dialogRef.afterClosed().subscribe((result: any) => {
+        console.log("The dialog was closed with result:", result);
+        if (result) {
+          this.removeImage(event, index, img);
+        }
+      });
+    }
+    else {
+      this.removeImage(event, index, img);
+    }
+  }
+
+  /*REMOVE SELECTED IMAGE  */
+  removeImage(event: any, index: number, img: any) {
+    this.loading = true;
+    this.filesArray[index].loading = true;
+    if (img?.id) {
+      delete img.uploadData;
+      this.removeUploadedImage(img, index, true);
+    }
+    else {
+      this.loading = false;
+      this.filesArray.splice(index, 1);
+      this.setSliderLoading();
+      this.onSubmit();
+    }
+  }
+
+  removeUploadedImage(img: any, index: number, silently: boolean = false) {
+    console.log("removeUploadedImage:", img);
+    this.helper.deleteUploadedFile(this.urlConfig.removeImage, img).subscribe((r: any) => {
+      console.log('Image Delete Res:', r);
+      this.loading = false;
+      this.filesArray.splice(index, 1);
+      this.setSliderLoading();
+      this.onSubmit();
+      if (!silently) {
+        this.helper.showSuccessMsg(r.message, 'Success', 3000);
+      }
+    },
+    (err: any) => { this.filesArray[index].loading = false; this.helper.showErrorMsg(err, "Error") })
+  }
+
+  async detectFiles(event: any, index: number = -1) {
+    console.log('detectFiles:', event);
+    event.preventDefault();
+
+    if (this.config?.limit === 1) {
+      this.filesArray = []; // Reset array for a single file
+    }
+
+    const files = event.target.files;
+    if (!files) {
+      this.helper.showErrorMsg('Please select a file', 'Error', 3000);
+      return;
+    }
+
+    // Validate file types based on accept parameter
+    if (this.isValidateMimeType && !this.validateFileTypes(files)) {
+      return;
+    }
+
+    if ((this.filesArray?.length + files.length) > this.config?.limit) {
+      this.helper.showErrorMsg(`You can upload a maximum of ${this.config?.limit} files`, 'Error', 3000);
+      return;
+    }
+
+    this.loading = true;
+    this.uploadInProgress.emit(true);
+
+    let uploadedFiles: any[] = [];
+
+    // Pre-allocate slots in filesArray to avoid race conditions
+    const startIndex = this.filesArray.length;
+    const placeholders = [...files].map((file, idx) => ({
+      tempId: `temp-${Date.now()}-${idx}`,
+      title: file.name,
+      name: file.name,
+      loading: true,
+      filename: file.name,
+      s3Url: '', // Will be filled during processing
+      sequence: this.isAddUploadedFileInLastNode ? startIndex + idx + 1 : this.filesArray.length + 1 - idx
+    }));
+
+    // Add all placeholders at once to prevent race conditions
+    if (this.isAddUploadedFileInLastNode) {
+      this.filesArray = [...this.filesArray, ...placeholders];
+    } else {
+      this.filesArray = [...placeholders.reverse(), ...this.filesArray];
+    }
+    this.setSliderLoading();
+
+    // Process all files concurrently with their pre-assigned indices
+    await Promise.all([...files].map((file, idx) => {
+      const targetIndex = this.isAddUploadedFileInLastNode ? startIndex + idx : idx;
+      return this.processFile(file, uploadedFiles, targetIndex, placeholders[this.isAddUploadedFileInLastNode ? idx : files.length - 1 - idx].tempId);
+    }));
+
+    if (this.config?.isStoredDb) {
+      await this.uploadFiles(uploadedFiles);
+    }
+
+    this.loading = false;
+    this.uploadInProgress.emit(false);
+
+    this.onSubmit(); // Call once after all uploads
+    this.updateSequence();
+
+    // Reset the input value so the same file can be selected again
+    event.target.value = '';
+  }
+
+  async processFile(file: File, uploadedFiles: any[], index: number, tempId?: string) {
+    let fileSize = file.size / 1024;
+    if (this.config?.fileSize && fileSize > this.config?.fileSize) {
+      let maxSize = this.config.fileSize / 1024;
+      this.helper.showErrorMsg(`File size must be ≤ ${maxSize >= 1 ? maxSize : this.config.fileSize} ${maxSize >= 1 ? 'MB' : 'KB'}`, 'Error', 3000);
+      return;
+    }
+
+    return new Promise<void>((resolve) => {
+      let reader = new FileReader();
+      reader.onload = async (e: any) => {
+        let mimeType = file.type;
+        let buffer = new Uint8Array(<ArrayBuffer>reader.result);
+
+        try {
+          let uploadResponse = await this.helper.getUploadUrl(this.urlConfig.getUploadUrl, file.name, mimeType, this.currentEntityType).toPromise();
+          let uploadData = uploadResponse.data.uploadUrlData;
+
+          let currentFileData = {
+            tempId: tempId || `temp-${Date.now()}`,
+            title: file.name, name: file.name, s3Url: uploadData.resourceUrl, // Use S3 URL
+            s3Path: uploadData.uploadPath, filename: file.name, id: null,
+            uploadData: uploadData, loading: true, buffer: buffer,  // Set loading to true initially
+            tags: null, tempTags: null, isEditMode: false, sequence: 1,
+          };
+
+          // Update the file at the pre-assigned index
+          if(index !== -1 && this.filesArray[index]) {
+            this.filesArray[index] = {...this.filesArray[index], ...currentFileData};
+          }
+          
+          this.setSliderLoading();
+          uploadedFiles.push(currentFileData);
+
+          // Upload to S3
+          await this.helper.putFile(uploadData.uploadURL, e.target.result).toPromise();
+
+          // After successful upload, ensure S3 URL is used and mark as completed
+          if(index !== -1 && this.filesArray[index]) {
+            this.filesArray[index].s3Url = uploadData.resourceUrl; // Ensure S3 URL
+            this.filesArray[index].loading = false;
+            // Ensure uploadData contains the correct S3 URL for database storage
+            this.filesArray[index].uploadData.resourceUrl = uploadData.resourceUrl;
+          }
+          this.setSliderLoading();
+
+          resolve();
+        } catch (error: any) {
+          // Set loading to false on error as well
+          if(index !== -1 && this.filesArray[index]) {
+            this.filesArray[index].loading = false;
+          }
+          this.helper.showHttpErrorMsg(error);
+          resolve();
+        }
+      };
+
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  uploadFiles(data: any) {
+    return new Promise((resolve, reject) => {
+      if (data && data.length > 0) {
+        console.log('There is a file pending to attach:', data);
+
+        // Keep track of tempIds for matching after API response
+        let tempIdMapping: any[] = [];
+        let files: any[] = [];
+        let fa = data.map((r: any) => {
+          if (r?.uploadData) {
+            // Ensure we're using the S3 URL, not any local file data
+            const s3Url = r.uploadData.resourceUrl;
+            // Store tempId separately for matching, don't send it to API
+            tempIdMapping.push({
+              tempId: r.tempId,
+              resourceUrl: s3Url
+            });
+            files.push({ 
+              fileName: r.uploadData?.fileName, 
+              resourceUrl: s3Url, // This ensures S3 URL is stored in database
+              uploadPath: r.uploadData?.uploadPath, 
+              uploadURL: r.uploadData?.uploadURL
+              // tempId removed - not sent to API
+            });
+          }
+          return r;
+        });
+
+        this.helper.attachFilesToEntity(this.urlConfig?.attachToEntity || 'not-specified', { files: files, entityId: this.currentEntityId, entityType: this.currentEntityType }, this.config.limit).subscribe({
+          next: (ir: any) => {
+            ir?.data?.map((file: any, idx: number) =>{
+              // Match by tempId first (more reliable for concurrent uploads), then fall back to S3 URL
+              const uploadedFile = tempIdMapping[idx];
+              let selectedIndex = this.filesArray?.findIndex(f => f.tempId === uploadedFile?.tempId);
+              
+              // Fallback to resourceUrl matching if tempId matching fails
+              if(selectedIndex === -1) {
+                selectedIndex = this.filesArray?.findIndex(f => f.uploadData?.resourceUrl == file.s3Url);
+              }
+              
+              if(selectedIndex !== -1){
+                this.filesArray[selectedIndex] = {
+                  ...this.filesArray[selectedIndex], 
+                  loading: false, 
+                  id: file?.id || null,
+                  s3Url: file.s3Url // Ensure we're using the S3 URL from the response
+                }
+              }
+            });
+            this.onSubmit();
+            resolve(ir);
+          },
+          error: (imErr: any) => { this.helper.showHttpErrorMsg(imErr); this.onError.emit(true); resolve(false); }
+        });
+      } else {
+        resolve(false);
+      }
+    });
+  }
+
+  deleteFile(event: any, t: any, index: number, file: any) {
+    event.stopPropagation();
+    if (this.isEnableDeleteConfirmation) {
+      let confirmBoxData: DialogConfig = {
+        title: this.dialogConfig?.title || 'Delete File',
+        message: this.deleteConfirmationMsg || (this.dialogConfig?.message || 'Are you sure, you want to delete this file?'),
+        iconClass: this.dialogConfig?.iconClass || 'angular-text-danger',
+        icon: this.dialogConfig?.icon || 'delete',
+        approveButtonText: this.dialogConfig?.approveButtonText || 'Yes, delete',
+        approveButtonClass: `angular-approve-button ${this.dialogConfig?.approveButtonClass}`,
+        cancelButtonText: this.dialogConfig?.cancelButtonText || 'No',
+        cancelButtonClass: `angular-cancel-button ${this.dialogConfig?.cancelButtonClass}`
+      };
+
+      const panelClass = ['angular-confirmation-dialog'];
+      if(this.dialogConfig?.panelClass){
+        panelClass.push(this.dialogConfig.panelClass);
+      }
+
+      const dialogRef = this.dialog.open(AngularConfirmationDialogComponent, {
+        width: "450px",
+        panelClass: panelClass,
+        data: confirmBoxData,
+        disableClose: true,
+      });
+
+      dialogRef.afterClosed().subscribe((result: any) => {
+        console.log("The dialog was closed with result:", result);
+        if (result) {
+          this.removeFile(event, index, file);
+        }
+      });
+    }
+    else {
+      this.removeFile(event, index, file);
+    }
+  }
+
+  removeFile(event: any, index: number, file: any) {
+    this.loading = true;
+    this.filesArray[index].loading = true;
+    if (file?.id) {
+      delete file.uploadData;
+      this.removeUploadedFile(file, index, true);
+    }
+    else {
+      this.loading = false;
+      this.filesArray.splice(index, 1);
+      this.setSliderLoading();
+      this.onSubmit();
+      this.onFileRemoved.emit(true);
+    }
+  }
+
+  removeUploadedFile(file: any, index: number, silently = false) {
+    console.log("removeUploadedFile:", file);
+    this.helper.deleteUploadedFile(this.urlConfig.removeImage, file).subscribe((r: any) => {
+      console.log('File Delete Res:', r);
+      this.loading = false;
+      this.filesArray.splice(index, 1);
+      this.setSliderLoading();
+      this.onSubmit();
+      if (!silently) {
+        this.helper.showSuccessMsg(r.message, 'Success', 3000);
+      }
+      this.onSubmit();
+    },
+    (err: any) => { this.filesArray[index].loading = false; this.helper.showErrorMsg(err, "Error") })
+  }
+
+  onSubmit() {
+    // this.filesArray = this.filesArray?.map((r, i) => { r.s3Url = r?.uploadData?.resourceUrl; return r; });
+    this.onUploaded.emit(this.filesArray);
+  }
+
+  async downloadFile(url: string, fileName: string) {
+    try {
+      // First try with fetch
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/octet-stream',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      
+      // Check if blob has content
+      if (blob.size === 0) {
+        throw new Error('File is empty or could not be fetched');
+      }
+
+      // Create download link
+      const blobUrl = URL.createObjectURL(blob);
+      const el = document.createElement("a");
+      el.href = blobUrl;
+      el.download = fileName;
+      el.style.display = 'none';
+      
+      // Add to DOM, click, and remove
+      document.body.appendChild(el);
+      el.click();
+      document.body.removeChild(el);
+      
+      // Cleanup blob URL
+      setTimeout(() => {
+        URL.revokeObjectURL(blobUrl);
+      }, 100);
+
+    } catch (error) {
+      console.error("Fetch download failed, trying alternative method:", error);
+      
+      // Fallback: Try direct link opening
+      try {
+        const el = document.createElement("a");
+        el.href = url;
+        el.download = fileName;
+        el.target = '_blank';
+        el.style.display = 'none';
+        
+        document.body.appendChild(el);
+        el.click();
+        document.body.removeChild(el);
+        
+      } catch (fallbackError) {
+        console.error("All download methods failed:", fallbackError);
+        this.helper.showErrorMsg("Failed to download file. Please try again or contact support.", 'Error', 5000);
+      }
+    }
+  }
+
+  clickTimeout: any = null;
+  clickDelay: number = 250; // Delay in milliseconds to distinguish single and double click
+
+  onSelectFile(file: any) {
+    if (this.config.selectionMode) {
+      if (this.clickTimeout) {
+        clearTimeout(this.clickTimeout);
+        this.clickTimeout = null;
+        this.openFile(file); // Double-click detected
+      } else {
+        this.clickTimeout = setTimeout(() => {
+          this.clickTimeout = null;
+          if (this.config.selectionMode) {
+            this.onFileSelect.emit(file); // Single-click detected
+          }
+        }, this.clickDelay);
+      }
+    }
+    else {
+      this.clickTimeout = null;
+      this.openFile(file);
+    }
+  }
+
+  openFile(file: any) {
+    if (!this.config.hiddenPreview) {
+      this.openPreviewDialog(file.s3Url, file.title);
+    }
+  }
+
+  openPreviewDialog(url: string, title: string): void {
+    if (url.indexOf('.jpg') != -1 || url.indexOf('.jpeg') != -1 || url.indexOf('.png') != -1) {
+      this.openImagePreviewDialog(url);
+    }
+    else if (url.indexOf('.pdf') != -1) {
+      this.openFileViewer(url, 'pdf');
+    }
+    // else if(url.indexOf('.csv') != -1){
+    //   this.openFileViewer(url, 'csv');
+    // }
+    else if (url.indexOf('.xlxs') != -1 || url.indexOf('.xlx') != -1 || url.indexOf('.xls') != -1) {
+      this.openFileViewer(url, 'excel');
+    }
+    else {
+      this.downloadFile(url, title);
+    }
+  }
+
+  openImagePreviewDialog(url: string): void {
+    const dialogRef = this.dialog.open(AngularPreviewImageComponent, {
+      panelClass: ['mat-p-0', 'relative'],
+      data: { url },
+    });
+
+    dialogRef.afterClosed().subscribe((result: any) => {
+      console.log('The dialog was closed', result);
+    });
+  }
+
+  openFileViewer(pdfUrl: string, fileType: FileViewerFileType) {
+    let dialogData: FileViewerDialogData = {
+      src: pdfUrl,
+      fileType: fileType
+    };
+
+    const dialogRef = this.dialog.open(AngularFileViewerComponent, {
+      width: this.isMobile ? "100%" : "90%",
+      height: this.isMobile ? "100%" : "98%",
+      minHeight: this.isMobile ? "100%" : "80%",
+      maxWidth: this.isMobile ? "100%" : "100%",
+      panelClass: ['angular-file-viewer'],
+      data: dialogData,
+      disableClose: false,
+    });
+
+    dialogRef.afterClosed().subscribe((result: any) => {
+      console.log("FileViewer Dialog Closed");
+    });
+  }
+
+  checkingForPreview(img: string) {
+    let imageArray = img.split('.');
+    let imageType = imageArray[imageArray?.length - 1];
+    if (imageType == 'png' || imageType == 'jpg' || imageType == 'jpeg') {
+      return true;
+    }
+    else {
+      return false;
+    }
+  }
+
+  setHeight(id: string, valueForAddedHeight: number = 0): string {
+    let height = document.getElementById(id)?.offsetWidth;
+    // console.log("=== setHeight::height ===", id, height);
+    return `${(height ?? 0) + valueForAddedHeight}px`;
+  }
+
+  generateFilesForSingleCard(){
+    if(this.filesArray?.length < this.config.limit){
+      for (let index = 0; index < (this.config.limit - this.filesArray?.length); index++) {
+        this.filesArray.push({
+          selectorId: generateRandomString(10),
+          tags: null,
+          tempTags: null,
+          isEditMode: false
+        });
+      }
+    }
+    else{
+      this.filesArray = this.filesArray?.map((file: any) => {
+        return {...file, selectorId: generateRandomString(10), tempTag: null, isEditMode: false};
+      });
+    }
+  }
+
+  editTagWithSpace(file: any){
+    console.log("=== editTagWithSpace :: file ===", file);
+    
+    let tempTag: any = file?.tempTags?.trim();
+    console.log("=== editTagWithSpace :: tempTag ===", tempTag);
+
+    if(tempTag && tempTag != ''){
+      let tempTagsArr: any[] = tempTag?.split(' ');
+      console.log("=== editTagWithSpace :: before tempTagsArr ===", tempTagsArr);
+
+      tempTagsArr = tempTagsArr?.filter(e => (e && e != ''))?.map(t =>{
+        if (t.includes('#')) {}
+        else{
+          t = `#${t}`;
+        }
+        return t;
+      });
+
+      tempTag = tempTagsArr.join(' ');
+      file.tempTags = `${tempTag}`;
+    }
+    else{
+      file.tempTags = tempTag
+    }
+  }
+
+  // onKeydown(event: KeyboardEvent, file: any) {
+  //   if (event.key === ',' || event.keyCode === 188) {
+  //     event.preventDefault();
+  //     this.editTagWithComma(file);
+  //   }
+  // }
+
+  // editTagWithComma(file: any){
+  //   let tempTag: any = file?.tempTags?.trim();
+
+  //   if(tempTag && tempTag != ''){
+  //     let tempTagsArr: any[] = tempTag?.split(' ');
+  //     tempTagsArr = tempTagsArr?.filter(e => (e && e != ''))?.map(t =>{
+  //       if (t.includes('#')) {}
+  //       else{
+  //         t = `#${t}`;
+  //       }
+  //       return t;
+  //     });
+
+  //     tempTag = tempTagsArr.join(' ');
+  //     tempTag = tempTag.replace(/,/g, '');
+  //     file.tempTags = `${tempTag} `;
+  //   }
+  //   else{
+  //     file.tempTags = tempTag
+  //   }
+  // }
+
+  onSubmitTags(file: any){
+    file.tags = file?.tempTags?.trim();
+    file.isEditMode = false;
+    this.helper.updateTag(this.urlConfig?.updateTag || 'not-specified', {id: file?.id || null, tag: file?.tags || null}).subscribe({
+      next: (ir: any) => {
+        this.helper.showSuccessMsg(ir.message, 'Success', 3000);
+        this.onSubmit();
+      },
+      error: (err: any) => this.helper.showHttpErrorMsg(err)
+    });
+  }
+
+  // Drag-and-drop upload state
+  isUploadDragOver = false;
+
+  // Drag state for highlighting
+  isDragging = false;
+  dragSourceIndex: number | null = null;
+  dropTargetIndex: number | null = null;
+
+  private canAcceptUploadDragDrop(): boolean {
+    if (!this.enableDragNDropForUpload || this.disabled || this.previewOnly || this.loading) {
+      return false;
+    }
+
+    return (this.config?.limit || 0) > (this.filesArray?.length || 0);
+  }
+
+  onUploadDragOver(event: DragEvent): void {
+    if (!this.canAcceptUploadDragDrop()) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = 'copy';
+    }
+
+    this.isUploadDragOver = true;
+  }
+
+  onUploadDragLeave(event: DragEvent): void {
+    if (!this.enableDragNDropForUpload) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const relatedTarget = event.relatedTarget as Node | null;
+    const currentTarget = event.currentTarget as Node;
+
+    if (relatedTarget && currentTarget.contains(relatedTarget)) {
+      return;
+    }
+
+    this.isUploadDragOver = false;
+  }
+
+  onUploadDrop(event: DragEvent): void {
+    if (!this.canAcceptUploadDragDrop()) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    this.isUploadDragOver = false;
+
+    const files = event.dataTransfer?.files;
+
+    if (!files || files.length === 0) {
+      return;
+    }
+
+    const syntheticEvent = {
+      preventDefault: () => {},
+      target: { files, value: '' }
+    };
+
+    if (this.type === 'file') {
+      this.detectFiles(syntheticEvent);
+    } else {
+      this.detectImages(syntheticEvent);
+    }
+  }
+
+  onDragStarted(index: number) {
+    this.isDragging = true;
+    this.dragSourceIndex = index;
+    this.dropTargetIndex = null;
+  }
+
+  onDragEntered(index: number) {
+    if (this.isDragging && index !== this.dragSourceIndex) {
+      this.dropTargetIndex = index;
+    }
+  }
+
+  onDragMoved(event: CdkDragMove) {
+    if (!this.isDragging) return;
+    
+    const pointerPosition = event.pointerPosition;
+    const dropItems = document.querySelectorAll('.drag-drop-item');
+    
+    let foundTarget: number | null = null;
+    
+    dropItems.forEach((item) => {
+      const rect = item.getBoundingClientRect();
+      const index = parseInt(item.getAttribute('data-index') || '-1', 10);
+      
+      if (index !== -1 && index !== this.dragSourceIndex) {
+        if (
+          pointerPosition.x >= rect.left &&
+          pointerPosition.x <= rect.right &&
+          pointerPosition.y >= rect.top &&
+          pointerPosition.y <= rect.bottom
+        ) {
+          foundTarget = index;
+        }
+      }
+    });
+    
+    this.dropTargetIndex = foundTarget;
+  }
+
+  onMouseEnterItem(index: number) {
+    if (this.isDragging && index !== this.dragSourceIndex) {
+      this.dropTargetIndex = index;
+    }
+  }
+
+  onMouseLeaveItem() {
+    // Only clear if we're dragging - the next mouseenter will set the new target
+  }
+
+  onDragEnded() {
+    // Don't reset state here - let drop() handle it
+    // This event fires BEFORE drop(), so resetting here clears our tracked indices
+    this.isDragging = false;
+    // Keep dragSourceIndex and dropTargetIndex - they'll be reset in drop()
+  }
+
+  drop(event: CdkDragDrop<any[]>) {
+    // Use our tracked source index instead of CDK's previousIndex (which is unreliable for grids)
+    const sourceIndex = this.dragSourceIndex !== null ? this.dragSourceIndex : event.previousIndex;
+    const targetIndex = this.dropTargetIndex !== null ? this.dropTargetIndex : event.currentIndex;
+
+    // Log drag info for debugging
+    const draggedItem = this.filesArray[sourceIndex];
+    console.log('=== DRAG & DROP DEBUG ===');
+    console.log('Picked element:', {
+      title: draggedItem?.title || draggedItem?.s3Url?.split('/').pop(),
+      originalPosition: sourceIndex + 1,
+      s3Url: draggedItem?.s3Url
+    });
+    console.log('Dropping at position:', targetIndex + 1);
+    console.log('dragSourceIndex (our tracking):', this.dragSourceIndex);
+    console.log('dropTargetIndex (our tracking):', this.dropTargetIndex);
+    console.log('event.currentIndex (CDK):', event.currentIndex);
+    console.log('event.previousIndex (CDK):', event.previousIndex);
+
+    // Reset drag state
+    this.isDragging = false;
+    this.dragSourceIndex = null;
+    this.dropTargetIndex = null;
+
+    // Ignore if same position
+    if (sourceIndex === targetIndex) {
+      console.log('Same position - no change needed');
+      return;
+    }
+
+    // Access current data
+    const currentData = [...this.filesArray];
+
+    if (!currentData || currentData.length === 0) {
+      return;
+    }
+
+    // Reorder: move item from source to target position (shift other items)
+    moveItemInArray(currentData, sourceIndex, targetIndex);
+
+    // Update filesArray with reordered data
+    this.filesArray = currentData;
+
+    // Log after reorder
+    const newPosition = this.filesArray.findIndex((f: any) => f.s3Url === draggedItem?.s3Url);
+    console.log('After reorder - element new position:', newPosition + 1);
+    console.log('=========================');
+
+    this.updateSequence(true);
+  }
+
+  updateSequence(isShowMessage: boolean = false){
+    // Update sequence for all files (including those without id yet)
+    // Re-calculate sequence based on current array order
+    this.filesArray = this.filesArray.map((file: any, index: number) => {
+      return {...file, sequence: (index + 1)};
+    });
+
+    if(this.enableDragNDrop && this.urlConfig?.updateSequence){
+      // Only send files with id to the server for sequence update
+      let filesWithId: any[] = this.filesArray.filter(f => f?.id && f?.id != null && f?.id != '');
+      let files: any[] = filesWithId?.length ? JSON.parse(JSON.stringify(filesWithId)) : [];
+      files = files?.map(f =>{
+        return {id: f?.id, sequence: f?.sequence || 1};
+      });
+      
+      if(files.length > 0) {
+        this.helper.updateSequence(this.urlConfig?.updateSequence || 'not-specified', {files}).subscribe({
+          next: (ir: any) => {
+            if(isShowMessage){
+              this.helper.showSuccessMsg(ir.message, 'Success', 3000);
+            }
+            else{
+              // Only show success message when files actually have IDs (meaning they were uploaded)
+              if(filesWithId.length > 0) {
+                this.helper.showSuccessMsg(`${this.type == 'image' ? 'Image' : 'File'} has been uploaded successfully`, 'Success', 3000);
+              }
+            }
+            this.dataSequenceChange.emit(this.filesArray);
+          },
+          error: (err: any) => { this.helper.showHttpErrorMsg(err); this.onError.emit(true); }
+        });
+      } else {
+        // If no files with id yet, just emit the current array
+        this.dataSequenceChange.emit(this.filesArray);
+      }
+    }
+    else{
+      this.dataSequenceChange.emit(this.filesArray);
+    }
+  }
+
+  getTagsArray(tags: string){
+    let tempTag: any = tags?.trim();
+    let tempTagsArr: any[] = tempTag?.split(' ');
+
+    return tempTagsArr?.filter(e => e && e != '');
+  }
+
+  // =====================
+  // Remote Upload Methods
+  // =====================
+
+  /**
+   * Check if remote upload is available and configured
+   */
+  isRemoteUploadAvailable(): boolean {
+    return !!(
+      this.remoteUploadConfig?.enabled &&
+      this.remoteUploadConfig?.socketAdapter &&
+      !this.isMobile &&
+      !this.isTab
+    );
+  }
+
+  /**
+   * Initialize remote upload configuration
+   * Call this in ngOnInit or when config changes
+   */
+  private initRemoteUpload(): void {
+    if (this.remoteUploadConfig?.enabled && this.remoteUploadConfig?.socketAdapter) {
+      this.remoteUploadService.configure(this.remoteUploadConfig);
+
+      // Subscribe to remote uploads (when files are accepted)
+      this.remoteUploadService.getRemoteUploads()
+        .pipe(takeUntil(this.destroy$))
+        .subscribe(event => {
+          this.handleRemoteUpload(event);
+        });
+
+      // Subscribe to pending files (files from mobile waiting to be accepted)
+      this.remoteUploadService.getPendingFiles()
+        .pipe(takeUntil(this.destroy$))
+        .subscribe(files => {
+          this.pendingFiles = files;
+          // Reset waiting state when we have pending files
+          if (files.length > 0) {
+            this.isWaitingForMobileUpload = false;
+          }
+        });
+
+      // Subscribe to waiting state
+      this.remoteUploadService.getIsWaitingForUpload()
+        .pipe(takeUntil(this.destroy$))
+        .subscribe(waiting => {
+          this.isWaitingForMobileUpload = waiting;
+        });
+    }
+  }
+
+  /**
+   * Handle a remote upload event
+   */
+  private handleRemoteUpload(event: AngularRemoteUploadEvent): void {
+    console.log('[AngularImageAndFilePicker] Remote upload received:', event);
+
+    // Reset waiting state
+    this.isWaitingForMobileUpload = false;
+
+    // Check if file already exists (prevent duplicates)
+    const fileExists = this.filesArray.some((f: any) => f.s3Url === event.file.s3Url);
+    if (fileExists) {
+      console.log('[AngularImageAndFilePicker] File already exists, skipping:', event.file.fileName);
+      return;
+    }
+
+    // Check if we've reached the limit
+    if (this.config?.limit && this.filesArray.length >= this.config.limit) {
+      this.helper.showErrorMsg(`Maximum limit of ${this.config.limit} files reached.`, 'Limit Reached');
+      return;
+    }
+
+    // Add the uploaded file to the array
+    const newFile = {
+      s3Url: event.file.s3Url,
+      title: event.file.fileName,
+      name: event.file.fileName,
+      filename: event.file.fileName,
+      mimeType: event.file.mimeType,
+      size: event.file.size,
+      uploadData: event.file.uploadData,
+      loading: false,
+      sequence: this.filesArray.length + 1,
+      remoteUpload: true,
+      mobileDeviceId: event.mobileDeviceId,
+      uploadedAt: event.timestamp
+    };
+
+    if (this.isAddUploadedFileInLastNode) {
+      this.filesArray.push(newFile);
+    } else {
+      this.filesArray.unshift(newFile);
+    }
+
+    this.setSliderLoading();
+    this.onSubmit();
+    this.updateSequence();
+    this.onRemoteUpload.emit(event);
+
+    this.helper.showSuccessMsg(
+      `${this.type === 'image' ? 'Image' : 'File'} uploaded from mobile device`,
+      'Remote Upload',
+      3000
+    );
+  }
+
+  /**
+   * Open the QR code dialog for mobile upload
+   */
+  openRemoteUploadDialog(): void {
+    if (!this.isRemoteUploadAvailable()) {
+      this.helper.showErrorMsg('Remote upload is not available', 'Not Available');
+      return;
+    }
+
+    const dialogData: AngularQrCodeDialogData = {
+      title: 'Upload from Mobile',
+      subtitle: `Scan this QR code to upload ${this.type === 'image' ? 'images' : 'files'} from your mobile device`,
+      qrSize: 200,
+      showCountdown: true,
+      fieldInfo: {
+        label: this.label || `${this.type === 'image' ? 'Images' : 'Files'}`,
+        accept: this.accept || (this.type === 'image' ? 'image/*' : '*'),
+        type: this.type,
+        entityType: this.entityType,
+        entityId: this.entityId,
+        isMultiple: this.config.isMultiple,
+        limit: this.config.limit,
+        isCompressed: this.config.isCompressed
+      }
+    };
+
+    const dialogRef = this.dialog.open(AngularQrCodeDialogComponent, {
+      width: this.isMobile ? '100%' : '470px',
+      maxWidth: '100%',
+      panelClass: ['angular-qr-code-dialog'],
+      data: dialogData,
+      disableClose: false
+    });
+
+    dialogRef.afterClosed().subscribe((result: any) => {
+      console.log('[AngularImageAndFilePicker] QR dialog closed:', result);
+      // Files are already added via the remote upload subscription
+    });
+  }
+
+  /**
+   * Check if currently paired with a mobile device
+   */
+  isRemotePaired(): boolean {
+    return this.remoteUploadService.isPaired();
+  }
+
+  /**
+   * Disconnect from paired mobile device
+   */
+  async disconnectRemote(): Promise<void> {
+    await this.remoteUploadService.disconnect();
+    this.isWaitingForMobileUpload = false;
+    this.mobileUploadFieldLabel = '';
+  }
+
+  /**
+   * Trigger upload from mobile - sends field request to mobile app
+   */
+  async triggerMobileUpload(): Promise<void> {
+    if (!this.isRemotePaired()) {
+      // Not connected - open QR dialog to connect first
+      this.openRemoteUploadDialog();
+      return;
+    }
+
+    // Already connected - send field request to mobile
+    const fieldInfo = {
+      label: this.label || `${this.type === 'image' ? 'Upload Image' : 'Upload File'}`,
+      accept: this.accept || (this.type === 'image' ? 'image/*' : '*'),
+      type: this.type,
+      entityType: this.entityType,
+      entityId: this.entityId,
+      isMultiple: this.config.isMultiple,
+      limit: this.config.limit,
+      remainingSlots: (this.config.limit || 10) - this.filesArray.length,
+      isCompressed: this.config.isCompressed
+    };
+
+    this.isWaitingForMobileUpload = true;
+    this.mobileUploadFieldLabel = fieldInfo.label;
+    await this.remoteUploadService.sendFieldRequest(fieldInfo);
+  }
+
+  /**
+   * Cancel waiting for mobile upload
+   */
+  async cancelMobileUpload(): Promise<void> {
+    this.isWaitingForMobileUpload = false;
+    await this.remoteUploadService.cancelFieldRequest();
+  }
+
+  /**
+   * Accept a pending file from mobile upload
+   * This calls the onFileAccept callback if provided, then handles the file
+   */
+  acceptPendingFile(pendingFile: AngularRemoteUploadEvent): void {
+    // Call the user-provided callback if available
+    if (this.remoteUploadConfig?.onFileAccept) {
+      this.remoteUploadConfig.onFileAccept(pendingFile.file);
+    }
+
+    // Accept the file in the service (removes from pending, emits to remoteUpload$)
+    this.remoteUploadService.acceptPendingFile(pendingFile);
+  }
+
+  /**
+   * Reject a pending file from mobile upload
+   */
+  rejectPendingFile(pendingFile: AngularRemoteUploadEvent): void {
+    this.remoteUploadService.rejectPendingFile(pendingFile);
+  }
+
+  /**
+   * Open dialog showing connection status with disconnect option
+   */
+  openViewConnectionDialog(): void {
+    const dialogRef = this.dialog.open(AngularViewConnectionDialogComponent, {
+      width: '600px',
+      maxWidth: '90vw',
+      data: {
+        title: 'Mobile Connection'
+      },
+      disableClose: false
+    });
+
+    dialogRef.afterClosed().subscribe(result => {
+      if (result === 'disconnected') {
+        console.log('[AngularImageAndFilePicker] Mobile device disconnected');
+      }
+    });
+  }
+
+  /**
+   * Check if a MIME type is an image type
+   */
+  isImageMimeType(mimeType: string | undefined): boolean {
+    if (!mimeType) return false;
+    return mimeType.startsWith('image/');
+  }
+
+  ngOnDestroy(): void {
+    this.destroy$.next();
+    this.destroy$.complete();
+  }
+}

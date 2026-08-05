@@ -1,0 +1,135 @@
+<div style="padding: 15px;">
+    <p><strong>Testing EntityId:</strong> {{ entityId }} | <strong>EntityType:</strong> {{ entityType }}</p>
+    <br>
+
+    <h3 for="">Mobile Upload Support</h3>
+    <angular-image-and-file-picker entityType="parcel_create"
+        [urlConfig]="urlConfig"  [entityId]="entityId" [entityType]="entityType"
+        [options]="{selectorId: 'choosing-img-for-parcel', height: '130px', isMultiple: true, limit: 3, cols: 5, isCompressed: false, hiddenDeleteBtn: false, hiddenPreview: false}"
+        label="Upload Image" hint="choose image and upload"
+        accept="image/*" [isEnableCapture]="true"
+        [remoteUploadConfig]="remoteUploadConfig"
+        [enableDragNDropForUpload]="true"
+    >
+    </angular-image-and-file-picker>
+    <br><br>
+
+
+    <h3 for="">Compress Support</h3>
+    <angular-image-and-file-picker entityType="test_img_compress"
+        [urlConfig]="urlConfig"  [entityId]="entityId" [entityType]="entityType"
+        [options]="{selectorId: 'choosing-img-for-test_img_compress', height: '130px', isMultiple: true, limit: 3, cols: 5, isCompressed: true, hiddenDeleteBtn: false, hiddenPreview: false}"
+        label="Upload Image" hint="choose image and upload"
+        accept="image/*" [isEnableCapture]="true"
+        [enableDragNDropForUpload]="true"
+        >
+    </angular-image-and-file-picker>
+    <br><br>
+
+    <h3 for="">Images with Card & Tags</h3>
+    <angular-image-and-file-picker [enableDragNDrop]="false" (dataSequenceChange)="dataSequenceChange($event)" type="image" viewType="card" [required]="false" [urlConfig]="urlConfig" [entityId]="entityId" [entityType]="entityType" [disabled]="false"
+        [options]="getOptions({selectorId: 'choosing-image-for-image-details-card-view-for-card-tags', limit: 10, enableImageTags: true, isMultiple: true, cols: 4})"
+        accept=".png,.jpeg,.jpg" label="Click to upload" [enableDragNDropForUpload]="true">
+    </angular-image-and-file-picker>
+
+    <br><br>
+
+    <h3 for="">Images with Initial State</h3>
+    <angular-image-and-file-picker type="image" viewType="card" [required]="false" [urlConfig]="urlConfig" [entityId]="entityId" [entityType]="entityType" [disabled]="false"
+        [options]="getOptions({selectorId: 'choosing-image-for-image-details-card-view-for-initial-state'})"
+        accept=".png,.jpeg,.jpg" label="Upload Image" [enableDragNDropForUpload]="true">
+    </angular-image-and-file-picker>
+
+    <br><br>
+
+    <h3 for="">Images for View only with No Data</h3>
+    <angular-image-and-file-picker type="image" viewType="card" [urlConfig]="urlConfig" [entityId]="entityId" [entityType]="entityType" [disabled]="true"
+        [options]="getOptions({selectorId: 'choosing-image-for-image-details-card-view-for-no-data'})"
+        accept=".png,.jpeg,.jpg" label="Upload Image" [enableDragNDropForUpload]="true">
+    </angular-image-and-file-picker>
+
+    <br><br>
+
+    <h3 for="">Images with Card View</h3>
+    <angular-image-and-file-picker type="image" viewType="card" [enableDragNDrop]="false" (dataSequenceChange)="dataSequenceChange($event)" [urlConfig]="urlConfig" [entityId]="entityId" [entityType]="entityType" [disabled]="false"
+        [options]="getOptions({selectorId: 'choosing-image-for-image-details-card-view', selectionMode: true})" [selectedId]="selectedId"
+        accept=".png,.jpeg,.jpg" label="Upload Image" [data]="images" [dialogConfig]="this.getImagePickerDialogConfig()" (onFileSelect)="onFileSelect($event)" [isEnableCapture]="true"
+        [enableDragNDropForUpload]="true">
+    </angular-image-and-file-picker>
+
+    <br><br>
+
+    <h3 for="">Images with Compact View</h3>
+    <angular-image-and-file-picker type="image" viewType="compact" [urlConfig]="urlConfig" [entityId]="entityId" [entityType]="entityType" [disabled]="false"
+        [options]="getOptions({selectorId: 'choosing-image-for-image-details-compact-view', selectionMode: true})" [selectedId]="selectedId"
+        accept=".png, .jpeg, .jpg" label="Upload Image" [data]="images" [dialogConfig]="this.getImagePickerDialogConfig()" (onFileSelect)="onFileSelect($event)" [isEnableCapture]="true">
+    </angular-image-and-file-picker>
+
+    <br><br>
+
+    <h3 for="">Images with List View</h3>
+    <angular-image-and-file-picker type="image" viewType="list" [urlConfig]="urlConfig" [entityId]="entityId" [entityType]="entityType" [disabled]="false"
+        [options]="getOptions({selectorId: 'choosing-image-for-image-details-list-view'})"
+        accept=".png,.jpeg,.jpg" label="Upload Image" [data]="images" [dialogConfig]="this.getImagePickerDialogConfig()"
+        [enableDragNDropForUpload]="true">
+    </angular-image-and-file-picker>
+
+    <br><br>
+
+    <h3 for="">Images for View only </h3>
+    <angular-image-and-file-picker type="image" viewType="card" [urlConfig]="urlConfig" [entityId]="entityId" [entityType]="entityType" [disabled]="true"
+        [options]="getOptions({selectorId: 'choosing-image-for-image-details-card-for-view-only'})"
+        accept=".png,.jpeg,.jpg" label="Upload Image" [data]="images" [dialogConfig]="this.getImagePickerDialogConfig()"
+        [enableDragNDropForUpload]="true">
+    </angular-image-and-file-picker>
+
+    <br>
+
+    <h3 for="">Images for View only (With Delete Enabled) </h3>
+    <angular-image-and-file-picker type="image" viewType="card" [urlConfig]="urlConfig" [entityId]="entityId" [entityType]="entityType" [disabled]="true" [showDeleteButtonWhenDisabled]="true"
+        [options]="getOptions({selectorId: 'choosing-image-for-image-details-card-for-view-only'})"
+        accept=".png,.jpeg,.jpg" label="Upload Image" [data]="images" [dialogConfig]="this.getImagePickerDialogConfig()"
+        [enableDragNDropForUpload]="true">
+    </angular-image-and-file-picker>
+
+    <br>
+
+    <angular-image-and-file-picker type="image" viewType="list" [urlConfig]="urlConfig" [entityId]="entityId" [entityType]="entityType" [disabled]="true"
+        [options]="getOptions({selectorId: 'choosing-image-for-image-details-list-for-view-only'})"
+        accept=".png,.jpeg,.jpg" label="Upload Image" [data]="images" [dialogConfig]="this.getImagePickerDialogConfig()">
+    </angular-image-and-file-picker>
+
+    <br><br>
+
+    <h3 for="">Files with Card View</h3>
+    <angular-image-and-file-picker type="file" viewType="card" [urlConfig]="urlConfig" [entityId]="entityId" [entityType]="entityType" [disabled]="false"
+        [options]="getOptions({selectorId: 'choosing-file-for-file-details-card-view'})"
+        accept=".pdf,.jpeg,.jpg" label="Upload File" [data]="files" [dialogConfig]="this.getImagePickerDialogConfig()"
+        [enableDragNDropForUpload]="true">
+    </angular-image-and-file-picker>
+
+    <br><br>
+
+    <h3 for="">Files with List View</h3>
+    <angular-image-and-file-picker type="file" viewType="list" [urlConfig]="urlConfig" [entityId]="entityId" [entityType]="entityType" [disabled]="false"
+        [options]="getOptions({selectorId: 'choosing-file-for-file-details-list-view'})"
+        accept=".pdf,.jpeg,.jpg" label="Upload File" [data]="files" [dialogConfig]="this.getImagePickerDialogConfig()"
+        [enableDragNDropForUpload]="true">
+    </angular-image-and-file-picker>
+
+    <br><br>
+
+    <h3 for="">Files for View only</h3>
+    <angular-image-and-file-picker type="file" viewType="card" [urlConfig]="urlConfig" [entityId]="entityId" [entityType]="entityType" [disabled]="true"
+        [options]="getOptions({selectorId: 'choosing-file-for-file-details-card-for-view-only'})"
+        accept=".pdf,.jpeg,.jpg" label="Upload File" [data]="files" [dialogConfig]="this.getImagePickerDialogConfig()"
+        [enableDragNDropForUpload]="true">
+    </angular-image-and-file-picker>
+
+    <br>
+
+    <angular-image-and-file-picker type="file" viewType="list" [urlConfig]="urlConfig" [entityId]="entityId" [entityType]="entityType" [disabled]="true"
+        [options]="getOptions({selectorId: 'choosing-file-for-file-details-list-for-view-only'})"
+        accept=".pdf,.jpeg,.jpg" label="Upload File" [data]="files" [dialogConfig]="this.getImagePickerDialogConfig()">
+    </angular-image-and-file-picker>
+</div>

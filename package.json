@@ -1,0 +1,51 @@
+{
+  "name": "angular-image-and-file-picker-project",
+  "version": "1.5.9",
+  "scripts": {
+    "ng": "ng",
+    "start": "ng serve  --port 4201",
+    "build": "ng build",
+    "build-library": "ng build angular-image-and-file-picker --configuration=production",
+    "build-library-watch": "ng build angular-image-and-file-picker --configuration=production --watch",
+    "watch": "ng build --watch --configuration development",
+    "test": "ng test",
+    "build:mobile": "ng build angular-mobile-upload",
+    "build:mobile:stage": "ng build angular-mobile-upload --configuration=stage",
+    "build:mobile:prod": "ng build angular-mobile-upload --configuration=production",
+    "serve:mobile": "ng serve angular-mobile-upload --configuration=development --port 4202 --host 0.0.0.0 --disable-host-check"
+  },
+  "private": true,
+  "dependencies": {
+    "@angular/animations": "^19.2.17",
+    "@angular/cdk": "^19.2.9",
+    "@angular/common": "^19.2.0",
+    "@angular/compiler": "^19.2.0",
+    "@angular/core": "^19.2.0",
+    "@angular/forms": "^19.2.0",
+    "@angular/material": "^19.2.9",
+    "@angular/platform-browser": "^19.2.0",
+    "@angular/platform-browser-dynamic": "^19.2.0",
+    "@angular/router": "^19.2.0",
+    "angularx-qrcode": "^19.0.0",
+    "browser-image-compression": "^2.0.2",
+    "ngx-extended-pdf-viewer": "^19.2.1",
+    "ngx-scanner-qrcode": "^1.7.6",
+    "rxjs": "~7.8.0",
+    "tslib": "^2.3.0",
+    "zone.js": "~0.15.0"
+  },
+  "devDependencies": {
+    "@angular-devkit/build-angular": "^19.2.6",
+    "@angular/cli": "^19.2.6",
+    "@angular/compiler-cli": "^19.2.0",
+    "@types/jasmine": "~5.1.0",
+    "jasmine-core": "~5.6.0",
+    "karma": "~6.4.0",
+    "karma-chrome-launcher": "~3.2.0",
+    "karma-coverage": "~2.2.0",
+    "karma-jasmine": "~5.1.0",
+    "karma-jasmine-html-reporter": "~2.1.0",
+    "ng-packagr": "^19.2.0",
+    "typescript": "~5.7.2"
+  }
+}

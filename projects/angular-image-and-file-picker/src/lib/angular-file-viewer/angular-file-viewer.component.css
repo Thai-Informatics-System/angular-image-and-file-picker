@@ -1,0 +1,20 @@
+.angular-pdf-viewer {
+    position: relative !important;
+    height: 100%;
+}
+
+.angular-pdf-viewer .close-btn {
+    position: absolute !important;
+    bottom: 10px !important;
+    right: 10px !important;
+    z-index: 1 !important;
+}
+
+.angular-pdf-viewer .download-btn {
+    color: var(--angular-primary);
+    cursor: pointer;
+    position: absolute !important;
+    top: 10px !important;
+    right: 10px !important;
+    z-index: 1 !important;
+}
