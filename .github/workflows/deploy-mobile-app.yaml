@@ -1,0 +1,101 @@
+name: Deploy Mobile Upload App
+
+# Builds and deploys the companion "upload from your phone" app that pairs with
+# <angular-image-and-file-picker> over a QR code. Consumers point at it via
+# AngularRemoteUploadConfig.mobileUploadUrl — in servicemind-saas that is
+# environment.tisImageUploaderMobileAppUrl.
+#
+# This bucket has exactly one deployer. Do not re-add this workflow to the
+# retired tis-image-viewer-and-uploader repo, or the two will race.
+
+on:
+  push:
+    branches:
+      - 'master'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ap-southeast-1
+      MOBILE_UPLOAD_S3_BUCKET: tis-image-and-file-upload-mobile-helper-app
+      MOBILE_UPLOAD_CLOUDFRONT_ID: ERFZZRBEO056B
+      DIST_DIR: dist/angular-mobile-upload/browser
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Build Mobile Upload App for Production
+        run: npm run build:mobile:prod
+        env:
+          CI: true
+
+      - name: Verify build output
+        run: |
+          # The sync below runs with --delete. If DIST_DIR were wrong or empty,
+          # that would empty the live bucket, so fail loudly here instead.
+          if [ ! -f "${DIST_DIR}/index.html" ]; then
+            echo "❌ ${DIST_DIR}/index.html not found — refusing to sync (--delete would empty the bucket)"
+            ls -R dist 2>/dev/null | head -40
+            exit 1
+          fi
+          echo "✅ Build output present: $(find "${DIST_DIR}" -type f | wc -l) files"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.SERVICEMIND_PROD_AWS_KEY }}
+          aws-secret-access-key: ${{ secrets.SERVICEMIND_PROD_AWS_SECRET }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy to S3
+        run: |
+          aws s3 sync "${DIST_DIR}" s3://${{ env.MOBILE_UPLOAD_S3_BUCKET }} \
+            --delete \
+            --cache-control "public, max-age=31536000, immutable" \
+            --exclude "index.html" \
+            --exclude "*.json"
+
+          aws s3 cp "${DIST_DIR}/index.html" s3://${{ env.MOBILE_UPLOAD_S3_BUCKET }}/index.html \
+            --cache-control "no-cache, no-store, must-revalidate"
+
+          # Copy any JSON files with no-cache headers
+          find "${DIST_DIR}" -name "*.json" -exec aws s3 cp {} s3://${{ env.MOBILE_UPLOAD_S3_BUCKET }}/ \
+            --cache-control "no-cache, no-store, must-revalidate" \;
+
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ env.MOBILE_UPLOAD_CLOUDFRONT_ID }} \
+            --paths "/*"
+
+      - name: Deployment Summary
+        run: |
+          cat << EOF >> $GITHUB_STEP_SUMMARY
+          ## Deployment Summary
+
+          | Property | Value |
+          |----------|-------|
+          | **Environment** | Production |
+          | **Branch** | ${{ github.ref_name }} |
+          | **Commit** | \`${{ github.sha }}\` |
+          | **S3 Bucket** | ${{ env.MOBILE_UPLOAD_S3_BUCKET }} |
+          | **CloudFront Distribution** | ${{ env.MOBILE_UPLOAD_CLOUDFRONT_ID }} |
+          EOF
