@@ -16,15 +16,11 @@ concurrency:
 
 jobs:
   # ─── Job 1: Run unit tests ───────────────────────────────────────────────────
-  # Reporting only — does NOT gate publishing. The libraries still carry the
-  # Angular CLI's generated "should create" specs, which have never had their
-  # TestBed providers filled in and fail on HttpClient / MatDialogRef. Blocking
-  # releases on them would just train everyone to ignore a permanently red CI.
-  # Once those specs are repaired, drop continue-on-error to make this a gate.
+  # A release gate: a red test job blocks publishing. Projects with no spec
+  # files skip the run rather than failing on TS18003.
   test:
     name: Test (ChromeHeadless)
     runs-on: ubuntu-latest
-    continue-on-error: true
 
     steps:
       - name: Checkout code
@@ -58,10 +54,6 @@ jobs:
   bump-and-publish:
     name: Bump Version, Tag and Publish
     needs: test
-    # Runs after the test job for log ordering, but is not gated by its result.
-    # To turn tests into a real release gate: drop this `if` and the test job's
-    # `continue-on-error`.
-    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     env:
       LIB_NAME: angular-image-and-file-picker
