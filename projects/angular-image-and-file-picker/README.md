@@ -2,8 +2,8 @@
 
 An all-in-one **image and file upload/view** Angular component by **Thai Informatic Systems Co. Ltd.**, designed for modern enterprise applications. This library provides a highly customizable drag-and-drop or button-triggered upload UI, with seamless preview and viewer integration for files including images, PDFs, videos, Excel, and more.
 
-[![npm version](https://img.shields.io/npm/v/@servicemind.angular/angular-image-and-file-picker)](https://www.npmjs.com/package/@servicemind.angular/angular-image-and-file-picker)
-[![npm downloads](https://img.shields.io/npm/dm/@servicemind.angular/angular-image-and-file-picker)](https://www.npmjs.com/package/@servicemind.angular/angular-image-and-file-picker)
+[![npm version](https://img.shields.io/npm/v/@servicemind.tis/angular-image-and-file-picker)](https://www.npmjs.com/package/@servicemind.tis/angular-image-and-file-picker)
+[![npm downloads](https://img.shields.io/npm/dm/@servicemind.tis/angular-image-and-file-picker)](https://www.npmjs.com/package/@servicemind.tis/angular-image-and-file-picker)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
@@ -23,7 +23,7 @@ An all-in-one **image and file upload/view** Angular component by **Thai Informa
 ## 📦 Installation
 
 ```bash
-npm install @servicemind.angular/angular-image-and-file-picker
+npm install @servicemind.tis/angular-image-and-file-picker
 ```
 
 ### Peer Dependencies
@@ -37,7 +37,7 @@ npm install @angular/material @angular/cdk
 ## 🧩 Module Setup
 
 ```ts
-import { AngularImageAndFilePickerModule } from '@servicemind.angular/angular-image-and-file-picker';
+import { AngularImageAndFilePickerModule } from '@servicemind.tis/angular-image-and-file-picker';
 
 @NgModule({
   imports: [AngularImageAndFilePickerModule]

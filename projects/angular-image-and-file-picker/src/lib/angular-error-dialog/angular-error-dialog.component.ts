@@ -2,7 +2,7 @@ import { Component, Inject } from '@angular/core';
 import { MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
 
 @Component({
-  selector: 'lib-angular-error-dialog',
+  selector: 'angular-error-dialog',
   standalone: false,
   templateUrl: './angular-error-dialog.component.html',
   styleUrl: './angular-error-dialog.component.css'

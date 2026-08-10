@@ -4,7 +4,7 @@
 
 This repository contains **two separate Angular applications**:
 
-1. **Angular Library** (`@servicemind.angular/angular-image-and-file-picker`) - A reusable component library for image/file upload with desktop-mobile pairing
+1. **Angular Library** (`@servicemind.tis/angular-image-and-file-picker`) - A reusable component library for image/file upload with desktop-mobile pairing
 2. **Mobile PWA** (`angular-mobile-upload`) - A standalone Progressive Web App that allows mobile devices to upload files to the desktop library
 
 These two apps communicate via **WebSocket** through a backend API to enable seamless file uploads from mobile devices to desktop applications.
@@ -12,7 +12,7 @@ These two apps communicate via **WebSocket** through a backend API to enable sea
 ## Workspace Structure
 
 ```
-tis-image-viewer-and-uploader/
+angular-image-and-file-picker/
 ├── .github/
 │   └── instructions/           # AI assistant instruction files
 ├── dist/                       # Built artifacts
@@ -54,7 +54,7 @@ tis-image-viewer-and-uploader/
 
 **Location:** `projects/angular-image-and-file-picker/`
 
-**Package Name:** `@servicemind.angular/angular-image-and-file-picker`
+**Package Name:** `@servicemind.tis/angular-image-and-file-picker`
 
 **Purpose:** Angular library providing reusable components for image and file upload with preview capabilities.
 

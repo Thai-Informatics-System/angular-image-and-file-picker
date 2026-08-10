@@ -1,0 +1,145 @@
+name: CI — Test, Bump Version, Tag and Publish
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:  # Allow manual triggering
+
+permissions:
+  contents: write  # For committing and pushing tags
+  packages: write  # For publishing to npm
+  id-token: write  # For npm OIDC trusted publishing (no token required)
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ─── Job 1: Run unit tests ───────────────────────────────────────────────────
+  test:
+    name: Test (ChromeHeadless)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --force
+
+      - name: Run library unit tests (headless)
+        run: npx ng test angular-image-and-file-picker --watch=false --browsers=ChromeHeadless --no-progress
+
+  # ─── Job 2: Bump version, tag, build, and publish ────────────────────────────
+  bump-and-publish:
+    name: Bump Version, Tag and Publish
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      LIB_NAME: angular-image-and-file-picker
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.PAT_TOKEN || github.token }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: 'npm'
+          registry-url: 'https://registry.npmjs.org/'
+
+      - name: Install dependencies
+        run: npm ci --force
+
+      - name: Bump version & inject
+        env:
+          BUMP: patch
+          LIB_NAME: ${{ env.LIB_NAME }}
+        run: node scripts/bump-and-inject.mjs
+
+      - name: Verify version sync
+        run: |
+          ROOT_VERSION=$(node -p "require('./package.json').version")
+          LIB_VERSION=$(node -p "require('./projects/${{ env.LIB_NAME }}/package.json').version")
+
+          if [ "$ROOT_VERSION" != "$LIB_VERSION" ]; then
+            echo "❌ Version mismatch: root=$ROOT_VERSION, lib=$LIB_VERSION"
+            exit 1
+          fi
+
+          echo "✅ Versions synchronized: $ROOT_VERSION"
+
+      - name: Commit version changes (skip CI)
+        run: |
+          if [[ -n "$(git status --porcelain)" ]]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add package.json projects/${{ env.LIB_NAME }}/package.json
+            git commit -m "chore: bump version for ${{ env.LIB_NAME }} [skip ci]"
+            git pull --rebase origin master
+            git push
+          fi
+
+      - name: Create tag for new version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v$VERSION"
+          if ! git rev-parse "$TAG" >/dev/null 2>&1; then
+            git tag "$TAG"
+            git push origin "$TAG"
+            echo "✅ Created and pushed tag: $TAG"
+          else
+            echo "⚪ Tag $TAG already exists, skipping"
+          fi
+
+      - name: Build library
+        run: npm run build-library
+
+      - name: Verify build output
+        run: |
+          if [ ! -f "./dist/${{ env.LIB_NAME }}/package.json" ]; then
+            echo "❌ Build failed — package.json not found in dist"
+            exit 1
+          fi
+          echo "✅ Build verification successful for ${{ env.LIB_NAME }}"
+
+      - name: Verify dist package metadata
+        run: |
+          node -e "
+            const p = require('./dist/${{ env.LIB_NAME }}/package.json');
+            const required = ['description', 'keywords', 'license', 'author', 'repository', 'homepage', 'bugs'];
+            const missing = required.filter(k => !p[k] || (Array.isArray(p[k]) && !p[k].length));
+            if (missing.length) {
+              console.error('❌ Missing package.json fields:', missing.join(', '));
+              process.exit(1);
+            }
+            if (!p.repository.url.includes('${{ github.repository }}'.split('/')[1])) {
+              console.error('❌ repository.url does not match this repo:', p.repository.url);
+              process.exit(1);
+            }
+            console.log('✅ Metadata complete — repository.url =', p.repository.url);
+          "
+
+      - name: Verify LICENSE is packaged
+        run: |
+          if [ ! -f "./dist/${{ env.LIB_NAME }}/LICENSE" ]; then
+            echo "❌ LICENSE missing from dist — it must sit next to projects/${{ env.LIB_NAME }}/package.json"
+            exit 1
+          fi
+          echo "✅ LICENSE packaged"
+
+      - name: Publish to npm
+        run: |
+          # Clear authToken so npm uses OIDC trusted publishing
+          echo "registry=https://registry.npmjs.org/" > "$NPM_CONFIG_USERCONFIG"
+          npm publish ./dist/${{ env.LIB_NAME }} --access public --provenance

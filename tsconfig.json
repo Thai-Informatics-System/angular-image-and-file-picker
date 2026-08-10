@@ -21,7 +21,7 @@
       "angular-image-and-file-picker": [
         "./dist/angular-image-and-file-picker"
       ],
-      "@servicemind.angular/angular-image-and-file-picker": [
+      "@servicemind.tis/angular-image-and-file-picker": [
         "./dist/angular-image-and-file-picker"
       ]
     }

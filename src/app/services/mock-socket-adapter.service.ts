@@ -7,7 +7,7 @@
 
 import { Injectable, OnDestroy } from '@angular/core';
 import { Observable, Subject, BehaviorSubject, of } from 'rxjs';
-import { AngularSocketAdapter } from '@servicemind.angular/angular-image-and-file-picker';
+import { AngularSocketAdapter } from '@servicemind.tis/angular-image-and-file-picker';
 
 @Injectable({
   providedIn: 'root'
@@ -206,7 +206,7 @@ import type {
   AngularRemoteUploadConfig, 
   AngularRemoteUploadEvent,
   UrlConfig 
-} from '@servicemind.angular/angular-image-and-file-picker';
+} from '@servicemind.tis/angular-image-and-file-picker';
 import { environment } from '../../environments/environment';
 
 @Component({

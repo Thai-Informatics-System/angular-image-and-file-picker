@@ -1,13 +1,27 @@
 {
-  "name": "@servicemind.angular/angular-image-and-file-picker",
-  "version": "1.5.9",
+  "name": "@servicemind.tis/angular-image-and-file-picker",
+  "version": "1.0.0",
+  "description": "Angular image and file upload component with drag-and-drop, pre-signed URL uploads, client-side compression, camera capture, and built-in preview for images, PDFs, video, and Excel.",
+  "keywords": [
+    "angular",
+    "angular-material",
+    "file-upload",
+    "image-upload",
+    "drag-and-drop",
+    "file-viewer",
+    "pdf-viewer",
+    "image-compression",
+    "camera-capture"
+  ],
+  "author": "Thai Informatics System",
+  "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Thai-Informatics-System/tis-image-viewer-and-uploader.git"
+    "url": "git+https://github.com/Thai-Informatics-System/angular-image-and-file-picker.git"
   },
-  "homepage": "https://github.com/Thai-Informatics-System/tis-image-viewer-and-uploader#readme",
+  "homepage": "https://github.com/Thai-Informatics-System/angular-image-and-file-picker#readme",
   "bugs": {
-    "url": "https://github.com/Thai-Informatics-System/tis-image-viewer-and-uploader/issues"
+    "url": "https://github.com/Thai-Informatics-System/angular-image-and-file-picker/issues"
   },
   "peerDependencies": {
     "@angular/common": "^19.2.0",
