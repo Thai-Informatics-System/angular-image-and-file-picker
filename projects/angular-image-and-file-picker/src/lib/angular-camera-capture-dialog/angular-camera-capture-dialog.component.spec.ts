@@ -55,4 +55,44 @@ describe('AngularCameraCaptureDialogComponent', () => {
     component.openUpload();
     expect(mockDialogRef.close).toHaveBeenCalledWith({ action: 'upload' });
   });
+
+  it('should show the upload button by default', () => {
+    const uploadBtn = fixture.nativeElement.querySelector('.upload-btn');
+    expect(uploadBtn).toBeTruthy();
+  });
+});
+
+describe('AngularCameraCaptureDialogComponent without file upload', () => {
+  let fixture: ComponentFixture<AngularCameraCaptureDialogComponent>;
+  let mockStream: jasmine.SpyObj<MediaStream>;
+
+  beforeEach(async () => {
+    mockStream = jasmine.createSpyObj('MediaStream', ['getTracks']);
+    mockStream.getTracks.and.returnValue([
+      jasmine.createSpyObj('MediaStreamTrack', ['stop'])
+    ]);
+
+    const mockData: CameraCaptureDialogData = {
+      stream: mockStream,
+      videoDevices: [],
+      isMobile: false,
+      allowFileUpload: false
+    };
+
+    await TestBed.configureTestingModule({
+      imports: [AngularCameraCaptureDialogComponent],
+      providers: [
+        { provide: MatDialogRef, useValue: jasmine.createSpyObj('MatDialogRef', ['close']) },
+        { provide: MAT_DIALOG_DATA, useValue: mockData }
+      ]
+    }).compileComponents();
+
+    fixture = TestBed.createComponent(AngularCameraCaptureDialogComponent);
+    fixture.detectChanges();
+  });
+
+  it('should hide the upload button when allowFileUpload is false', () => {
+    const uploadBtn = fixture.nativeElement.querySelector('.upload-btn');
+    expect(uploadBtn).toBeNull();
+  });
 });

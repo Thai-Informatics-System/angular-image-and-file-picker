@@ -13,6 +13,17 @@
     >
     </angular-image-and-file-picker>
     <br><br>
+    
+    <h3 for="">Camera Capture Only (Disable File Upload)</h3>
+    <angular-image-and-file-picker entityType="parcel_create"
+        [urlConfig]="urlConfig"  [entityId]="entityId" [entityType]="entityType"
+        [options]="{selectorId: 'choosing-img-for-parcel', height: '130px', isMultiple: true, limit: 3, cols: 5, isCompressed: false, hiddenDeleteBtn: false, hiddenPreview: false}"
+        label="Upload Image" hint="choose image and upload"
+        accept="image/*" [disableFileUpload]="true"
+        [enableDragNDropForUpload]="true"
+    >
+    </angular-image-and-file-picker>
+    <br><br>
 
 
     <h3 for="">Compress Support</h3>

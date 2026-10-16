@@ -111,6 +111,7 @@ This is the main component that allows users to upload and preview files.
 | `isEnableDeleteConfirmation` | `boolean` | `true` | Confirm before deleting |
 | `deleteConfirmationMsg` | `string` | — | Override the confirmation text |
 | `isEnableCapture` | `boolean` | `false` | Offer camera capture |
+| `disableFileUpload` | `boolean` | `false` | Block the file picker, camera Upload button, and drag-and-drop drops for images. Camera capture and QR / upload-from-mobile stay available. |
 | `dialogConfig` | `DialogConfig` | — | Confirmation dialog labels and sizing |
 | `enableDragNDropForUpload` | `boolean` | `false` | Accept files dropped onto the control |
 | `enableDragNDrop` | `boolean` | `false` | Allow reordering previews by dragging |
