@@ -17,6 +17,25 @@ An all-in-one **image and file upload/view** Angular component by **Thai Informa
 - ✅ Fully customizable UI and dialog labels
 - ✅ Support for standalone and module-based Angular apps
 - ✅ Supports multiple uploads, size control, and compression toggle
+- ✅ Optional date/time and GPS watermarks burned into camera photographs
+
+---
+
+## Capture watermarks
+
+Photographs taken with the in-library camera can permanently include the shutter time and, optionally, the device's latitude and longitude. The overlay is drawn into the image pixels. It is not an HTML label and it is not stored only in EXIF.
+
+Leave `captureWatermarkConfig` unset and the library behaves as before. Gallery files, drag-and-drop, and phone uploads are never watermarked.
+
+```html
+<angular-image-and-file-picker
+  [urlConfig]="urlConfig"
+  [isEnableCapture]="true"
+  [captureWatermarkConfig]="watermarkConfig">
+</angular-image-and-file-picker>
+```
+
+Full configuration, positions, failure policies, and provider setup: [image capture watermark configuration](docs/image-capture-watermark-configuration.md).
 
 ---
 
@@ -111,6 +130,7 @@ This is the main component that allows users to upload and preview files.
 | `isEnableDeleteConfirmation` | `boolean` | `true` | Confirm before deleting |
 | `deleteConfirmationMsg` | `string` | — | Override the confirmation text |
 | `isEnableCapture` | `boolean` | `false` | Offer camera capture |
+| `captureWatermarkConfig` | `ImageCaptureWatermarkConfig \| null` | `null` | Burn a capture timestamp and/or GPS coordinates into photographs taken with the in-library camera. Gallery picks are unchanged. |
 | `dialogConfig` | `DialogConfig` | — | Confirmation dialog labels and sizing |
 | `enableDragNDropForUpload` | `boolean` | `false` | Accept files dropped onto the control |
 | `enableDragNDrop` | `boolean` | `false` | Allow reordering previews by dragging |

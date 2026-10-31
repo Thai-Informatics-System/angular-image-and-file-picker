@@ -34,6 +34,10 @@
       }
     </div>
 
+    @if (captureError()) {
+      <div class="capture-error" role="alert">{{ captureError() }}</div>
+    }
+
     <!-- Action buttons -->
     <div class="action-buttons">
       <button

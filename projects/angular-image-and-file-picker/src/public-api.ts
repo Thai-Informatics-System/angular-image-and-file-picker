@@ -15,3 +15,6 @@ export * from './lib/angular-qr-code-dialog/angular-qr-code-dialog.component';
 
 // Camera Capture Dialog
 export * from './lib/angular-camera-capture-dialog/angular-camera-capture-dialog.component';
+
+// Capture watermarks (date/time and GPS burned into camera photographs)
+export * from './lib/services/image-capture-watermark.service';

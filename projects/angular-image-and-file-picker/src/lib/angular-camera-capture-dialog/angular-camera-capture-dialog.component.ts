@@ -4,12 +4,18 @@ import { MatDialogRef, MAT_DIALOG_DATA, MatDialogModule } from '@angular/materia
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import type { ImageCaptureWatermarkConfig } from '../interfaces/image-capture-watermark.type';
+import { ImageCaptureWatermarkError, ImageCaptureWatermarkService } from '../services/image-capture-watermark.service';
 
 export interface CameraCaptureDialogData {
   stream: MediaStream;
   videoDevices?: MediaDeviceInfo[];
   isMobile: boolean;
   allowFileUpload?: boolean;
+  captureWatermarkConfig?: ImageCaptureWatermarkConfig | null;
+  /** Read at shutter time so a later binding applies without reopening the dialog. */
+  getCaptureWatermarkConfig?: () => ImageCaptureWatermarkConfig | null | undefined;
+  onCaptureError?: (message: string, cancelled: boolean) => void;
 }
 
 export interface CameraCaptureResult {
@@ -39,11 +45,14 @@ export class AngularCameraCaptureDialogComponent implements OnInit, OnDestroy {
   isCapturing = signal(false);
   isSwitching = signal(false);
   showFlash = signal(false);
+  captureError = signal<string | null>(null);
   hasMultipleCameras = false;
+  private destroyed = false;
 
   constructor(
     public dialogRef: MatDialogRef<AngularCameraCaptureDialogComponent>,
-    @Inject(MAT_DIALOG_DATA) public data: CameraCaptureDialogData
+    @Inject(MAT_DIALOG_DATA) public data: CameraCaptureDialogData,
+    private watermark: ImageCaptureWatermarkService
   ) {
     this.currentStream = data.stream;
     this.hasMultipleCameras = (data.videoDevices?.length ?? 0) > 1;
@@ -59,6 +68,7 @@ export class AngularCameraCaptureDialogComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.destroyed = true;
     this.stopStream();
   }
 
@@ -101,65 +111,119 @@ export class AngularCameraCaptureDialogComponent implements OnInit, OnDestroy {
   }
 
   async capturePhoto(): Promise<void> {
+    const capturedAt = new Date();
     this.isCapturing.set(true);
+    this.captureError.set(null);
     this.showFlash.set(true);
 
-    // Wait for flash animation
-    setTimeout(async () => {
+    // The timestamp is the shutter time. GPS and encoding happen after the flash.
+    setTimeout(() => {
       this.showFlash.set(false);
+      void this.exportCapture(capturedAt);
+    }, 300);
+  }
 
-      const video = this.videoElement.nativeElement;
-      const canvas = this.canvasElement.nativeElement;
-      const ctx = canvas.getContext('2d');
+  private async exportCapture(capturedAt: Date): Promise<void> {
+    if (this.destroyed) {
+      return;
+    }
 
-      if (!ctx) {
+    const video = this.videoElement?.nativeElement;
+    const canvas = this.canvasElement?.nativeElement;
+    const ctx = canvas?.getContext('2d') ?? null;
+    if (!video || !canvas || !ctx || !video.videoWidth || !video.videoHeight) {
+      this.isCapturing.set(false);
+      this.reportError('Could not capture the photo.', false);
+      return;
+    }
+
+    try {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      try {
+        await this.watermark.paint(canvas, ctx, this.readWatermarkConfig(), capturedAt);
+      } catch (error) {
+        try {
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        } catch {
+          // The clean frame is already on the canvas when a redraw is not possible.
+        }
+        if (this.destroyed) {
+          return;
+        }
+        const watermarkError = error instanceof ImageCaptureWatermarkError ? error : null;
+        const cancelled = !!watermarkError && watermarkError.code !== 'processing';
+        this.reportError(
+          cancelled && watermarkError
+            ? watermarkError.message
+            : 'Could not apply the capture watermark. The photo will be used without it.',
+          cancelled
+        );
+        if (cancelled) {
+          this.isCapturing.set(false);
+          this.releaseCanvas(canvas);
+          return;
+        }
+      }
+
+      if (this.destroyed) {
+        return;
+      }
+
+      const blob = await this.canvasToJpeg(canvas);
+      this.releaseCanvas(canvas);
+      if (this.destroyed || !blob) {
         this.isCapturing.set(false);
         return;
       }
 
-      // Set canvas dimensions to match video
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
+      const file = new File([blob], `camera-capture-${Date.now()}.jpg`, {
+        type: 'image/jpeg',
+        lastModified: Date.now()
+      });
+      this.dialogRef.close({ action: 'capture', file });
+      this.isCapturing.set(false);
+    } catch {
+      if (!this.destroyed) {
+        this.isCapturing.set(false);
+        this.reportError('Could not capture the photo.', false);
+      }
+    }
+  }
 
-      // Draw video frame to canvas
-      ctx.drawImage(video, 0, 0);
+  private readWatermarkConfig(): ImageCaptureWatermarkConfig | null {
+    if (this.data.getCaptureWatermarkConfig) {
+      return this.data.getCaptureWatermarkConfig() ?? null;
+    }
+    return this.data.captureWatermarkConfig ?? null;
+  }
 
-      // Convert canvas to blob
-      canvas.toBlob(
-        (blob) => {
-          if (blob) {
-            const file = new File([blob], `camera-capture-${Date.now()}.jpg`, {
-              type: 'image/jpeg',
-              lastModified: Date.now()
-            });
+  private reportError(message: string, cancelled: boolean): void {
+    this.captureError.set(message);
+    this.data.onCaptureError?.(message, cancelled);
+  }
 
-            const result: CameraCaptureResult = {
-              action: 'capture',
-              file
-            };
+  private canvasToJpeg(canvas: HTMLCanvasElement): Promise<Blob | null> {
+    return new Promise((resolve) => {
+      canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.9);
+    });
+  }
 
-            this.dialogRef.close(result);
-          }
-          this.isCapturing.set(false);
-        },
-        'image/jpeg',
-        0.9
-      );
-    }, 300);
+  private releaseCanvas(canvas: HTMLCanvasElement): void {
+    canvas.width = 0;
+    canvas.height = 0;
   }
 
   openUpload(): void {
-    const result: CameraCaptureResult = {
-      action: 'upload'
-    };
-    this.dialogRef.close(result);
+    this.destroyed = true;
+    this.dialogRef.close({ action: 'upload' });
   }
 
   cancel(): void {
-    const result: CameraCaptureResult = {
-      action: 'cancel'
-    };
-    this.dialogRef.close(result);
+    this.destroyed = true;
+    this.dialogRef.close({ action: 'cancel' });
   }
 
   private stopStream(): void {

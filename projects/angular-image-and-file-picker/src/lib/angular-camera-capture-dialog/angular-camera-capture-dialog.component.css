@@ -90,6 +90,16 @@
   opacity: 0.7;
 }
 
+.capture-error {
+  color: #ffd7d7;
+  background: rgba(180, 40, 40, 0.35);
+  border: 1px solid rgba(255, 120, 120, 0.45);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 /* Action Buttons Container */
 .action-buttons {
   display: flex;

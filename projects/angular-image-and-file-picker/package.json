@@ -1,7 +1,7 @@
 {
   "name": "@servicemind.tis/angular-image-and-file-picker",
-  "version": "1.0.4",
-  "description": "Angular image and file upload component with drag-and-drop, pre-signed URL uploads, client-side compression, camera capture, and built-in preview for images, PDFs, video, and Excel.",
+  "version": "1.1.0",
+  "description": "Angular image and file upload component with drag-and-drop, pre-signed URL uploads, client-side compression, camera capture with optional date and GPS watermarks, and built-in preview for images, PDFs, video, and Excel.",
   "keywords": [
     "angular",
     "angular-material",

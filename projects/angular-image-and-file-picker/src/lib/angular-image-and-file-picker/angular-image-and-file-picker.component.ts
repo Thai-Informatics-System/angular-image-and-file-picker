@@ -1,6 +1,6 @@
 import { Component, EventEmitter, Input, Output, SimpleChanges, OnDestroy } from '@angular/core';
 import { AngularFileViewerComponent } from '../angular-file-viewer/angular-file-viewer.component';
-import type { DialogConfig, FileViewerDialogData, FileViewerFileType, OptionConfig, UrlConfig, AngularRemoteUploadConfig, AngularRemoteUploadEvent } from '../interfaces';
+import type { DialogConfig, FileViewerDialogData, FileViewerFileType, OptionConfig, UrlConfig, AngularRemoteUploadConfig, AngularRemoteUploadEvent, ImageCaptureWatermarkConfig } from '../interfaces';
 import { AngularPreviewImageComponent } from '../angular-preview-image/angular-preview-image.component';
 import { BehaviorSubject, Observable, Subject, map, sequenceEqual, shareReplay, takeUntil } from 'rxjs';
 import { MatDialog } from '@angular/material/dialog';
@@ -55,6 +55,8 @@ export class AngularImageAndFilePickerComponent implements OnDestroy {
   @Input() isAddUploadedFileInLastNode: boolean = false;
   @Input() isEnableDeleteConfirmation: boolean = true;
   @Input() isEnableCapture: boolean = false;
+  /** Optional overlays burned into photographs taken with this library's camera. Gallery picks are unchanged. */
+  @Input() captureWatermarkConfig: ImageCaptureWatermarkConfig | null = null;
   @Input() disableFileUpload: boolean = false;
   @Input() deleteConfirmationMsg!: string;
   @Input() dialogConfig!: DialogConfig;
@@ -532,7 +534,15 @@ export class AngularImageAndFilePickerComponent implements OnDestroy {
       stream,
       videoDevices,
       isMobile: this.isMobile,
-      allowFileUpload: !this.disableFileUpload
+      allowFileUpload: !this.disableFileUpload,
+      captureWatermarkConfig: this.captureWatermarkConfig,
+      getCaptureWatermarkConfig: () => this.captureWatermarkConfig,
+      onCaptureError: (message, cancelled) => {
+        this.helper.showErrorMsg(message, 'Error', 5000);
+        if (cancelled) {
+          this.onError.emit(true);
+        }
+      }
     };
 
     const dialogRef = this.dialog.open(AngularCameraCaptureDialogComponent, {
