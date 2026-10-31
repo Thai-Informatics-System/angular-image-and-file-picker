@@ -44,10 +44,26 @@
   overflow: hidden;
 }
 
+.video-stage {
+  position: relative;
+  width: 100%;
+  max-width: 600px;
+}
+
+/* Sized and cropped like the video so overlays land where the capture draws them */
+.live-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 12px;
+  pointer-events: none;
+}
+
 /* Video Element */
 .camera-video {
   width: 100%;
-  max-width: 600px;
   height: auto;
   max-height: 70vh;
   border-radius: 12px;
@@ -98,6 +114,35 @@
   padding: 8px 12px;
   font-size: 13px;
   line-height: 1.4;
+}
+
+.location-status {
+  color: #d7e6ff;
+  background: rgba(40, 90, 180, 0.35);
+  border: 1px solid rgba(120, 170, 255, 0.45);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.location-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.location-retry-btn {
+  flex: none;
+  color: #fff;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 16px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 /* Action Buttons Container */
@@ -156,6 +201,12 @@
 .capture-btn:hover:not([disabled]) {
   transform: scale(1.05);
   box-shadow: 0 8px 25px rgba(63, 81, 181, 0.6);
+}
+
+.capture-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
 .upload-btn {

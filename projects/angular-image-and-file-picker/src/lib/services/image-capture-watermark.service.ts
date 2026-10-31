@@ -55,13 +55,47 @@ export class ImageCaptureWatermarkService {
     canvas: HTMLCanvasElement,
     ctx: CanvasRenderingContext2D,
     config: ImageCaptureWatermarkConfig | null | undefined,
-    capturedAt: Date
+    capturedAt: Date,
+    knownFix?: ImageCaptureLocationFix | null
   ): Promise<void> {
-    const prepared = await this.prepare(config, capturedAt);
+    const prepared = await this.prepare(config, capturedAt, knownFix);
     if (!prepared) {
       return;
     }
     this.render(canvas, ctx, prepared);
+  }
+
+  /** Draws the overlays with the location already in hand. Never requests a location. */
+  paintLive(
+    canvas: HTMLCanvasElement,
+    ctx: CanvasRenderingContext2D,
+    config: ImageCaptureWatermarkConfig | null | undefined,
+    at: Date,
+    fix: ImageCaptureLocationFix | null
+  ): void {
+    const prepared = this.compose(resolveImageCaptureWatermarkConfig(config), fix, at);
+    if (prepared) {
+      this.render(canvas, ctx, prepared);
+    }
+  }
+
+  isLocationEnabled(config: ImageCaptureWatermarkConfig | null | undefined): boolean {
+    return resolveImageCaptureWatermarkConfig(config).location.enabled;
+  }
+
+  /** True when a photo must not be taken without a location. */
+  isLocationRequired(config: ImageCaptureWatermarkConfig | null | undefined): boolean {
+    const { location } = resolveImageCaptureWatermarkConfig(config);
+    return location.enabled && location.failurePolicy === 'cancel';
+  }
+
+  /** Requests one location fix. Rejects with ImageCaptureWatermarkError whatever the failure policy. */
+  async getLocationFix(config: ImageCaptureWatermarkConfig | null | undefined): Promise<ImageCaptureLocationFix> {
+    try {
+      return await this.readFix(resolveImageCaptureWatermarkConfig(config));
+    } catch (error) {
+      throw this.asLocationError(error);
+    }
   }
 
   /**
@@ -113,16 +147,28 @@ export class ImageCaptureWatermarkService {
 
   private async prepare(
     config: ImageCaptureWatermarkConfig | null | undefined,
-    capturedAt: Date
+    capturedAt: Date,
+    knownFix?: ImageCaptureLocationFix | null
   ): Promise<PreparedOverlay | null> {
     const resolved = resolveImageCaptureWatermarkConfig(config);
     if (!resolved.dateTime.enabled && !resolved.location.enabled) {
       return null;
     }
 
-    const fix = await this.acquireLocation(resolved);
+    const fix = resolved.location.enabled && knownFix ? knownFix : await this.acquireLocation(resolved);
+    return this.compose(resolved, fix, capturedAt);
+  }
+
+  private compose(
+    resolved: ResolvedImageCaptureWatermarkConfig,
+    fix: ImageCaptureLocationFix | null,
+    capturedAt: Date
+  ): PreparedOverlay | null {
+    if (!resolved.dateTime.enabled && !resolved.location.enabled) {
+      return null;
+    }
     const dateText = resolved.dateTime.enabled ? formatCaptureDateTime(capturedAt, resolved.dateTime) : '';
-    const locationText = fix
+    const locationText = fix && resolved.location.enabled
       ? formatCaptureLocation(fix, { ...resolved.location, timezone: resolved.dateTime.timezone })
       : '';
     const dateLines = dateText ? dateText.split('\n') : [];
@@ -139,22 +185,26 @@ export class ImageCaptureWatermarkService {
     }
 
     try {
-      const fix = await this.requestLocation(resolved);
-      if (!fix || !isValidCaptureCoordinate(fix.latitude, fix.longitude)) {
-        throw new ImageCaptureWatermarkError('invalid-coordinates', 'Location coordinates are invalid.');
-      }
-      return {
-        latitude: fix.latitude,
-        longitude: fix.longitude,
-        accuracy: typeof fix.accuracy === 'number' && Number.isFinite(fix.accuracy) ? fix.accuracy : undefined,
-        timestamp: typeof fix.timestamp === 'number' && Number.isFinite(fix.timestamp) ? fix.timestamp : undefined,
-      };
+      return await this.readFix(resolved);
     } catch (error) {
       if (resolved.location.failurePolicy === 'cancel') {
         throw this.asLocationError(error);
       }
       return null;
     }
+  }
+
+  private async readFix(resolved: ResolvedImageCaptureWatermarkConfig): Promise<ImageCaptureLocationFix> {
+    const fix = await this.requestLocation(resolved);
+    if (!fix || !isValidCaptureCoordinate(fix.latitude, fix.longitude)) {
+      throw new ImageCaptureWatermarkError('invalid-coordinates', 'Location coordinates are invalid.');
+    }
+    return {
+      latitude: fix.latitude,
+      longitude: fix.longitude,
+      accuracy: typeof fix.accuracy === 'number' && Number.isFinite(fix.accuracy) ? fix.accuracy : undefined,
+      timestamp: typeof fix.timestamp === 'number' && Number.isFinite(fix.timestamp) ? fix.timestamp : undefined,
+    };
   }
 
   private requestLocation(resolved: ResolvedImageCaptureWatermarkConfig): Promise<ImageCaptureLocationFix> {

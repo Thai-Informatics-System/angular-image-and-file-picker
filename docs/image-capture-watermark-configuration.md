@@ -216,6 +216,10 @@ The default plate is the contrast against a bright or dark scene. Set `backgroun
 
 The browser prompts for location only when the location overlay is enabled and the master switch is not off. Date-only watermarks do not prompt.
 
+The camera dialog draws the enabled overlays on the video with a canvas at the capture's pixel size, so the view matches the saved photo. The time updates every second. When `location.enabled` is true, the dialog requests a location as it opens and refreshes it every 5 seconds. The shutter uses the latest fix. When location is off, the dialog does not request one.
+
+With `cancel`, Capture is disabled until a location arrives. If the location is denied or unavailable, the dialog shows the reason and a Try again button. Upload stays available unless `disableFileUpload` is set. A slow refresh keeps the last fix. A denied refresh clears it and disables Capture.
+
 | Situation | `continue` (default) | `cancel` |
 |---|---|---|
 | Permission denied | Photo is kept, without a location line | Camera stays open, no file is returned |

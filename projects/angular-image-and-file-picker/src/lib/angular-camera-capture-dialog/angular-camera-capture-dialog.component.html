@@ -1,13 +1,19 @@
 <div class="camera-modal-overlay">
   <div class="camera-modal-container">
     <div class="video-container">
-      <!-- Video element -->
-      <video
-        #videoElement
-        autoplay
-        playsinline
-        class="camera-video">
-      </video>
+      <div class="video-stage">
+        <!-- Video element -->
+        <video
+          #videoElement
+          autoplay
+          playsinline
+          class="camera-video"
+          (loadedmetadata)="syncLiveOverlay()">
+        </video>
+
+        <!-- Live watermark, drawn at the capture's pixel size -->
+        <canvas #liveOverlayElement class="live-overlay" aria-hidden="true"></canvas>
+      </div>
 
       <!-- Hidden canvas for capturing -->
       <canvas #canvasElement style="display: none;"></canvas>
@@ -38,6 +44,17 @@
       <div class="capture-error" role="alert">{{ captureError() }}</div>
     }
 
+    @if (locationRequired() && locationStatus() === 'pending') {
+      <div class="location-status" role="status">Getting your location. Allow location access to capture a photo.</div>
+    }
+
+    @if (locationRequired() && locationStatus() === 'failed') {
+      <div class="capture-error location-error" role="alert">
+        <span>{{ locationError() }} A location is required to capture a photo.</span>
+        <button type="button" class="location-retry-btn" (click)="retryLocation()">Try again</button>
+      </div>
+    }
+
     <!-- Action buttons -->
     <div class="action-buttons">
       <button
@@ -45,7 +62,7 @@
         color="primary"
         class="action-btn capture-btn"
         (click)="capturePhoto()"
-        [disabled]="isCapturing()">
+        [disabled]="isCapturing() || captureBlocked()">
         <mat-icon>photo_camera</mat-icon>
         @if (!data.isMobile) {
           <span>Capture</span>
