@@ -965,3 +965,74 @@
     outline-offset: 2px;
     background-color: rgba(31, 106, 173, 0.06);
 }
+
+/* Compact view: upload box + icon-only mobile upload button in one row */
+.compact-picker-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.compact-mobile-btn {
+    position: relative;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 42px;
+    height: 42px;
+    padding: 0;
+    box-sizing: border-box;
+    background: var(--angular-primary, #1F6AAD);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.compact-mobile-btn:hover {
+    background: var(--angular-primary-dark, #175080);
+    box-shadow: 0 2px 6px rgba(31, 106, 173, 0.3);
+}
+
+.compact-mobile-btn.connected {
+    background: #4caf50;
+}
+
+.compact-mobile-btn.connected:hover {
+    background: #388e3c;
+    box-shadow: 0 2px 6px rgba(76, 175, 80, 0.3);
+}
+
+.compact-mobile-btn.waiting {
+    background: #fafafa;
+    border: 1px dashed rgba(0, 0, 0, 0.38);
+}
+
+.compact-mobile-btn.waiting:hover {
+    border-color: var(--angular-cancel, #bb333b);
+    box-shadow: none;
+}
+
+.compact-mobile-btn mat-icon {
+    font-size: 22px;
+    width: 22px;
+    height: 22px;
+}
+
+.compact-mobile-link {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    font-size: 14px;
+    width: 18px;
+    height: 18px;
+    line-height: 18px;
+    text-align: center;
+    color: #4caf50;
+    background-color: white;
+    border-radius: 50%;
+    box-shadow: 0px 0px 5px 0px #9E9E9E;
+    cursor: pointer;
+}

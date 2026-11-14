@@ -248,7 +248,8 @@
         </div>
     }
     @else if(viewType == 'compact'){
-        <div [class.image-picker-label-compact]="!previewOnly" [class.error]="required && (filesArray?.length || 0) <= 0" [class.upload-drag-over]="enableDragNDropForUpload && isUploadDragOver" style="height: 42px; width: 42px;" (dragover)="onUploadDragOver($event)" (dragleave)="onUploadDragLeave($event)" (drop)="onUploadDrop($event)">
+        <div class="compact-picker-row">
+        <div [class.image-picker-label-compact]="!previewOnly" [class.error]="required && (filesArray?.length || 0) <= 0" [class.upload-drag-over]="enableDragNDropForUpload && isUploadDragOver" style="height: 42px; width: 42px; flex-shrink: 0;" (dragover)="onUploadDragOver($event)" (dragleave)="onUploadDragLeave($event)" (drop)="onUploadDrop($event)">
             @if(filesArray?.length){
                 <div>
                     @for(file of filesArray; track file.s3Url; let i = $index; let l = $last;){
@@ -297,6 +298,25 @@
 
                 </div>
             }
+        </div>
+
+        <!-- Mobile upload: icon-only button beside the compact box (same actions as the card view) -->
+        @if(isRemoteUploadAvailable() && !disabled && !previewOnly && (!(filesArray?.length) || (config?.limit || 0) > (filesArray?.length || 0))){
+            @if(isWaitingForMobileUpload) {
+                <button type="button" class="compact-mobile-btn waiting" (click)="cancelMobileUpload(); $event.preventDefault(); $event.stopPropagation()" title="Waiting for mobile... click to cancel">
+                    <mat-progress-spinner diameter="18" mode="indeterminate"></mat-progress-spinner>
+                </button>
+            } @else if(isRemotePaired()) {
+                <button type="button" class="compact-mobile-btn connected" (click)="triggerMobileUpload(); $event.preventDefault(); $event.stopPropagation()" title="Upload from Mobile">
+                    <mat-icon>mobile_screen_share</mat-icon>
+                    <span class="material-icons compact-mobile-link" (click)="openViewConnectionDialog(); $event.preventDefault(); $event.stopPropagation()" title="View Connection">link</span>
+                </button>
+            } @else {
+                <button type="button" class="compact-mobile-btn" (click)="openRemoteUploadDialog(); $event.preventDefault(); $event.stopPropagation()" title="Connect Mobile Device">
+                    <mat-icon>qr_code_scanner</mat-icon>
+                </button>
+            }
+        }
         </div>
     }
     @else if(viewType == 'list'){
