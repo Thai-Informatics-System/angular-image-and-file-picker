@@ -13,7 +13,7 @@
         </button>
       }
       @if (showScanAgain) {
-        <button mat-raised-button color="accent">
+        <button mat-raised-button color="accent" (click)="scanAgain()">
           <mat-icon>qr_code_scanner</mat-icon>
           Scan QR Code Again
         </button>

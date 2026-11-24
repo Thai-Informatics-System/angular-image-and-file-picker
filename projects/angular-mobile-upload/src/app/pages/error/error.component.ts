@@ -1,6 +1,6 @@
 import { Component } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { ActivatedRoute, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
 
@@ -19,7 +19,12 @@ export class ErrorComponent {
   showScanAgain = false;
   showHelp = false;
 
-  constructor(private route: ActivatedRoute) {
+  /** Back to the upload page with the QR scanner open */
+  scanAgain(): void {
+    this.router.navigate(['/'], { queryParams: { scan: 1 }, replaceUrl: true });
+  }
+
+  constructor(private route: ActivatedRoute, private router: Router) {
     this.route.queryParams.subscribe(params => {
       const errorType = params['type'];
       

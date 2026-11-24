@@ -2,7 +2,7 @@ import { Component, EventEmitter, Input, Output, SimpleChanges, OnDestroy } from
 import { AngularFileViewerComponent } from '../angular-file-viewer/angular-file-viewer.component';
 import type { DialogConfig, FileViewerDialogData, FileViewerFileType, OptionConfig, UrlConfig, AngularRemoteUploadConfig, AngularRemoteUploadEvent, ImageCaptureWatermarkConfig } from '../interfaces';
 import { AngularPreviewImageComponent } from '../angular-preview-image/angular-preview-image.component';
-import { BehaviorSubject, Observable, Subject, map, sequenceEqual, shareReplay, takeUntil } from 'rxjs';
+import { BehaviorSubject, Observable, Subject, Subscription, map, sequenceEqual, shareReplay, takeUntil } from 'rxjs';
 import { MatDialog } from '@angular/material/dialog';
 import { BreakpointObserver, Breakpoints } from '@angular/cdk/layout';
 import { AngularHelperService } from '../services/angular-helper.service';
@@ -84,6 +84,9 @@ export class AngularImageAndFilePickerComponent implements OnDestroy {
   // Mobile upload state
   isWaitingForMobileUpload = false;
   mobileUploadFieldLabel: string = '';
+  /** This picker's id towards the remote upload service (which picker asked the phone for a file). */
+  private readonly remoteRequesterId = `picker-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  private remoteSubscriptions: Subscription | null = null;
   
   // Pending files from mobile (waiting to be accepted/rejected)
   pendingFiles: AngularRemoteUploadEvent[] = [];
@@ -1649,18 +1652,25 @@ export class AngularImageAndFilePickerComponent implements OnDestroy {
    * Call this in ngOnInit or when config changes
    */
   private initRemoteUpload(): void {
+    // Called from ngOnChanges and ngOnInit: never keep two sets of subscriptions
+    this.remoteSubscriptions?.unsubscribe();
+    this.remoteSubscriptions = null;
+
     if (this.remoteUploadConfig?.enabled && this.remoteUploadConfig?.socketAdapter) {
       this.remoteUploadService.configure(this.remoteUploadConfig);
+      const subs = new Subscription();
 
-      // Subscribe to remote uploads (when files are accepted)
-      this.remoteUploadService.getRemoteUploads()
+      // Subscribe to remote uploads (when files are accepted). The service sends every phone file to all
+      // pickers; take only those meant for this one (no requester = old behaviour, everyone takes it).
+      subs.add(this.remoteUploadService.getRemoteUploads()
         .pipe(takeUntil(this.destroy$))
         .subscribe(event => {
+          if (event.requesterId && event.requesterId !== this.remoteRequesterId) return;
           this.handleRemoteUpload(event);
-        });
+        }));
 
       // Subscribe to pending files (files from mobile waiting to be accepted)
-      this.remoteUploadService.getPendingFiles()
+      subs.add(this.remoteUploadService.getPendingFiles()
         .pipe(takeUntil(this.destroy$))
         .subscribe(files => {
           this.pendingFiles = files;
@@ -1668,15 +1678,23 @@ export class AngularImageAndFilePickerComponent implements OnDestroy {
           if (files.length > 0) {
             this.isWaitingForMobileUpload = false;
           }
-        });
+        }));
 
-      // Subscribe to waiting state
-      this.remoteUploadService.getIsWaitingForUpload()
+      // Subscribe to waiting state: only the picker that asked the phone shows it
+      subs.add(this.remoteUploadService.getIsWaitingForUpload()
         .pipe(takeUntil(this.destroy$))
         .subscribe(waiting => {
-          this.isWaitingForMobileUpload = waiting;
-        });
+          this.isWaitingForMobileUpload = waiting && this.isActiveRemoteRequester();
+        }));
+
+      this.remoteSubscriptions = subs;
     }
+  }
+
+  /** True when this picker is the one that last asked the phone for a file (or none has asked yet). */
+  private isActiveRemoteRequester(): boolean {
+    const active = this.remoteUploadService.getActiveRequesterId();
+    return !active || active === this.remoteRequesterId;
   }
 
   /**
@@ -1743,6 +1761,9 @@ export class AngularImageAndFilePickerComponent implements OnDestroy {
       this.helper.showErrorMsg('Remote upload is not available', 'Not Available');
       return;
     }
+
+    // Files sent right after pairing belong to this picker
+    this.remoteUploadService.setActiveRequester(this.remoteRequesterId, this.remoteUploadConfig);
 
     const dialogData: AngularQrCodeDialogData = {
       title: 'Upload from Mobile',
@@ -1814,9 +1835,18 @@ export class AngularImageAndFilePickerComponent implements OnDestroy {
       isCompressed: this.config.isCompressed
     };
 
+    this.remoteUploadService.setActiveRequester(this.remoteRequesterId, this.remoteUploadConfig);
     this.isWaitingForMobileUpload = true;
     this.mobileUploadFieldLabel = fieldInfo.label;
-    await this.remoteUploadService.sendFieldRequest(fieldInfo);
+    const sent = await this.remoteUploadService.sendFieldRequest(fieldInfo);
+    if (!sent) {
+      // The phone did not get the request (closed, locked, offline): don't wait for a file that won't come
+      this.isWaitingForMobileUpload = false;
+      this.helper.showErrorMsg(
+        'Your phone is not connected. Open the upload page on your phone, or scan the QR code again.',
+        'Phone not connected'
+      );
+    }
   }
 
   /**
@@ -1877,6 +1907,8 @@ export class AngularImageAndFilePickerComponent implements OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.remoteSubscriptions?.unsubscribe();
+    this.remoteUploadService.releaseRequester(this.remoteRequesterId);
     this.destroy$.next();
     this.destroy$.complete();
   }
