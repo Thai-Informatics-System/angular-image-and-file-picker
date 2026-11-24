@@ -1,4 +1,4 @@
-import { acceptsAnything, decodeApiUrl, guessMimeType, isFileTypeAccepted, resolveMimeType, toInputAccept } from './upload-helpers';
+import { acceptsAnything, acceptsCameraPhoto, decodeApiUrl, guessMimeType, isFileTypeAccepted, resolveMimeType, toInputAccept } from './upload-helpers';
 
 const file = (name: string, type = '') => new File(['x'], name, { type });
 
@@ -35,6 +35,20 @@ describe('upload-helpers', () => {
       expect(toInputAccept('*')).toBeNull();
       expect(toInputAccept('')).toBeNull();
       expect(toInputAccept(' image/* ')).toBe('image/*');
+    });
+
+    it('adds MIME types to extensions so phones open the photo library / camera', () => {
+      expect(toInputAccept('.png,.jpeg,.jpg')).toBe('.png,image/png,.jpeg,image/jpeg,.jpg');
+      expect(toInputAccept('.png,.jpeg,.jpg,.pdf')).toBe('.png,image/png,.jpeg,image/jpeg,.jpg,.pdf,application/pdf');
+      expect(toInputAccept('.xyz')).toBe('.xyz');
+    });
+
+    it('offers the camera only when a JPEG photo fits the field', () => {
+      expect(acceptsCameraPhoto('*')).toBeTrue();
+      expect(acceptsCameraPhoto('image/*')).toBeTrue();
+      expect(acceptsCameraPhoto('.png,.jpeg,.jpg')).toBeTrue();
+      expect(acceptsCameraPhoto('.png')).toBeFalse();
+      expect(acceptsCameraPhoto('.pdf')).toBeFalse();
     });
   });
 

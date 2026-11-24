@@ -12,7 +12,7 @@ import { NgxScannerQrcodeComponent, ScannerQRCodeResult } from 'ngx-scanner-qrco
 
 import { MobileSocketService, QrCodeParams, ConnectionStatus, DesktopMessage, DevicesOnlineStatus, SupersededError } from '../../services/mobile-socket.service';
 import { MobileUploadService } from '../../services/mobile-upload.service';
-import { decodeApiUrl, isFileTypeAccepted, resolveMimeType, toInputAccept } from '../../utils/upload-helpers';
+import { acceptsCameraPhoto, decodeApiUrl, isFileTypeAccepted, resolveMimeType, toInputAccept } from '../../utils/upload-helpers';
 
 @Component({
   selector: 'app-upload',
@@ -31,6 +31,7 @@ import { decodeApiUrl, isFileTypeAccepted, resolveMimeType, toInputAccept } from
 })
 export class UploadComponent implements OnInit, OnDestroy, AfterViewChecked {
   @ViewChild('fileInput') fileInput!: ElementRef<HTMLInputElement>;
+  @ViewChild('cameraInput') cameraInput!: ElementRef<HTMLInputElement>;
   @ViewChild('scanner') scanner!: NgxScannerQrcodeComponent;
 
   private readonly router = inject(Router);
@@ -108,6 +109,9 @@ export class UploadComponent implements OnInit, OnDestroy, AfterViewChecked {
 
   // `accept` attribute for the file input (null = no filter, e.g. the desktop sent '*')
   readonly inputAccept = computed(() => toInputAccept(this.acceptTypes()));
+
+  // "Take Photo" opens the camera directly (capture); offered when a camera photo (JPEG) fits the field
+  readonly canUseCamera = computed(() => acceptsCameraPhoto(this.acceptTypes()));
 
   readonly uploadType = computed<'image' | 'file'>(() => {
     const fieldInfo = this.desktopFieldInfo();
@@ -446,6 +450,10 @@ export class UploadComponent implements OnInit, OnDestroy, AfterViewChecked {
 
   openFileSelector(): void {
     this.fileInput?.nativeElement?.click();
+  }
+
+  openCamera(): void {
+    this.cameraInput?.nativeElement?.click();
   }
 
   async onFileSelected(event: Event): Promise<void> {

@@ -8,6 +8,9 @@
     (change)="onFileSelected($event)" 
     style="display: none;" 
   />
+  <!-- Camera: opens the rear camera directly (the picker above may only offer the photo library) -->
+  <input type="file" #cameraInput accept="image/*" capture="environment"
+    (change)="onFileSelected($event)" style="display: none;" />
 
   <!-- Loading State -->
   @if (isInitializing()) {
@@ -172,15 +175,22 @@
                 <div class="instruction-message">
                   <mat-icon>info</mat-icon>
                   <span>
-                    Tap the button below to select files. They will be uploaded and sent to your desktop.
+                    {{ canUseCamera() ? 'Take a photo or choose from your gallery.' : 'Tap the button below to select files.' }}
+                    They will be uploaded and sent to your desktop.
                   </span>
                 </div>
               }
 
               <div class="upload-section">
-                <button mat-raised-button color="primary" class="upload-btn" (click)="openFileSelector()">
+                @if (canUseCamera()) {
+                  <button mat-raised-button color="primary" class="upload-btn camera-btn" (click)="openCamera()">
+                    <mat-icon>photo_camera</mat-icon>
+                    <span>{{ uploadedFiles().length > 0 ? 'Take Another Photo' : 'Take Photo' }}</span>
+                  </button>
+                }
+                <button mat-raised-button color="primary" class="upload-btn gallery-btn" (click)="openFileSelector()">
                   <mat-icon>{{ uploadType() === 'image' ? 'add_photo_alternate' : 'upload_file' }}</mat-icon>
-                  <span>{{ uploadedFiles().length > 0 ? 'Add More' : (uploadType() === 'image' ? 'Select Images' : 'Select Files') }}</span>
+                  <span>{{ uploadType() === 'image' ? 'Choose from Gallery' : (uploadedFiles().length > 0 ? 'Add More Files' : 'Select Files') }}</span>
                 </button>
               </div>
             } @else if (uploadedFiles().length === 0) {
