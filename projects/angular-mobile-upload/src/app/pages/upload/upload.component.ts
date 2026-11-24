@@ -13,6 +13,9 @@ import { NgxScannerQrcodeComponent, ScannerQRCodeResult } from 'ngx-scanner-qrco
 import { MobileSocketService, QrCodeParams, ConnectionStatus, DesktopMessage, DevicesOnlineStatus, SupersededError } from '../../services/mobile-socket.service';
 import { MobileUploadService } from '../../services/mobile-upload.service';
 import { acceptsCameraPhoto, decodeApiUrl, isFileTypeAccepted, resolveMimeType, toInputAccept } from '../../utils/upload-helpers';
+// Same overlay code as the desktop picker's camera (this app's CI does not build the library, so import its source)
+import { ImageCaptureWatermarkService } from '../../../../../angular-image-and-file-picker/src/lib/services/image-capture-watermark.service';
+import type { ImageCaptureWatermarkConfig } from '../../../../../angular-image-and-file-picker/src/lib/interfaces';
 
 @Component({
   selector: 'app-upload',
@@ -39,6 +42,7 @@ export class UploadComponent implements OnInit, OnDestroy, AfterViewChecked {
   private readonly socketService = inject(MobileSocketService);
   private readonly uploadService = inject(MobileUploadService);
   private readonly snackBar = inject(MatSnackBar);
+  private readonly watermark = inject(ImageCaptureWatermarkService);
 
   private destroy$ = new Subject<void>();
   private scannerStartPending = false;
@@ -77,6 +81,8 @@ export class UploadComponent implements OnInit, OnDestroy, AfterViewChecked {
   
   // Upload progress
   readonly isUploading = signal(false);
+  /** Adding the date/time and location to a camera photo (reading GPS can take a few seconds) */
+  readonly isStamping = signal(false);
   readonly uploadProgress = signal(0);
   readonly uploadedFiles = signal<UploadedFile[]>([]);
 
@@ -376,7 +382,8 @@ export class UploadComponent implements OnInit, OnDestroy, AfterViewChecked {
             // remainingSlots 0 means the field is full (older desktops send only limit)
             limit: field.remainingSlots ?? field.limit,
             isCompressed: field.isCompressed,
-            requestId: message['requestId']
+            requestId: message['requestId'],
+            captureWatermarkConfig: field.captureWatermarkConfig ?? null
           });
           this.snackBar.open(`Upload requested: ${field.label}`, '', { duration: 3000 });
         }
@@ -456,7 +463,8 @@ export class UploadComponent implements OnInit, OnDestroy, AfterViewChecked {
     this.cameraInput?.nativeElement?.click();
   }
 
-  async onFileSelected(event: Event): Promise<void> {
+  /** @param fromCamera files from "Take Photo": they get the organisation's date/time and GPS stamp */
+  async onFileSelected(event: Event, fromCamera = false): Promise<void> {
     const input = event.target as HTMLInputElement;
     if (!input.files?.length) return;
 
@@ -497,14 +505,43 @@ export class UploadComponent implements OnInit, OnDestroy, AfterViewChecked {
       }
     }
 
-    for (const file of files) {
+    for (let file of files) {
       // Stop when the desktop cancelled or replaced the request meanwhile
       if (this.desktopFieldInfo() !== fieldInfo) break;
+      if (fromCamera) {
+        const stamped = await this.stampCameraPhoto(file, fieldInfo);
+        if (!stamped) break; // no location where one is required: the photo is not sent
+        file = stamped;
+      }
       await this.uploadFile(file, fieldInfo);
     }
 
     // Clear input for next selection
     input.value = '';
+  }
+
+  /**
+   * Camera photos get the date/time and GPS overlay the desktop's camera uses (the organisation's image capture
+   * settings, sent with the field request). Gallery files are never stamped, as on the desktop. Resolves null when
+   * the settings require a location and the phone cannot give one (permission denied, no fix).
+   */
+  private async stampCameraPhoto(file: File, fieldInfo: DesktopFieldInfo | null): Promise<File | null> {
+    const config = fieldInfo?.captureWatermarkConfig;
+    if (!config?.enabled) return file;
+    this.isStamping.set(true);
+    try {
+      return await this.watermark.apply(file, config, { capturedAt: new Date(), fileName: file.name });
+    } catch (error: any) {
+      console.warn('[UploadComponent] Could not stamp the photo:', error);
+      this.snackBar.open(
+        error?.message || 'Could not add the date and location to the photo. Allow location access and try again.',
+        'OK',
+        { duration: 6000 }
+      );
+      return null;
+    } finally {
+      this.isStamping.set(false);
+    }
   }
 
   /** Make sure the presigned-URL endpoints are known (retries the fetch when it failed on connect). */
@@ -1055,6 +1092,8 @@ interface DesktopFieldInfo {
   isCompressed?: boolean;
   /** The desktop's field request id, sent back with each file */
   requestId?: string;
+  /** Date/time and GPS overlay for camera photos (the organisation's image capture settings); null = none */
+  captureWatermarkConfig?: ImageCaptureWatermarkConfig | null;
 }
 
 interface UploadUrls {

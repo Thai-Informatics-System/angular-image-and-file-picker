@@ -10,6 +10,7 @@ import {
   AngularRemoteUploadMessage,
   AngularRemoteUploadedFile
 } from '../interfaces/socket-adapter.interface';
+import type { ImageCaptureWatermarkConfig } from '../interfaces';
 
 const DEFAULT_PAIRING_TTL = 24 * 60 * 60 * 1000; // 24 hours
 const DEFAULT_STORAGE_KEY = 'angular-remote-upload-session';
@@ -497,6 +498,8 @@ export class AngularRemoteUploadService implements OnDestroy {
     limit?: number;
     remainingSlots?: number;
     isCompressed?: boolean;
+    /** Date/time and GPS overlay for photos taken with the phone camera (null = none). */
+    captureWatermarkConfig?: ImageCaptureWatermarkConfig | null;
   }): Promise<boolean> {
     if (!this.isConnectedToMobile()) {
       console.warn(`[${AngularRemoteUploadService.COMPONENT}] Not connected to mobile, cannot send field request`);

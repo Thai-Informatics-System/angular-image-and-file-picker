@@ -10,7 +10,7 @@
   />
   <!-- Camera: opens the rear camera directly (the picker above may only offer the photo library) -->
   <input type="file" #cameraInput accept="image/*" capture="environment"
-    (change)="onFileSelected($event)" style="display: none;" />
+    (change)="onFileSelected($event, true)" style="display: none;" />
 
   <!-- Loading State -->
   @if (isInitializing()) {
@@ -169,7 +169,7 @@
           </div>
 
           <!-- Instruction Message and Upload Button -->
-          @if (isReady() && !isUploading()) {
+          @if (isReady() && !isUploading() && !isStamping()) {
             @if (canUploadMore()) {
               @if (uploadedFiles().length === 0) {
                 <div class="instruction-message">
@@ -207,6 +207,14 @@
             <h3>Connected Successfully!</h3>
             <p>Waiting for desktop to select an upload field...</p>
             <p class="helper-text">Click on an upload field in the desktop app to start uploading from this device.</p>
+          </div>
+        }
+
+        <!-- Adding the date/time and location to a camera photo -->
+        @if (isStamping()) {
+          <div class="upload-progress">
+            <mat-spinner diameter="32" color="primary"></mat-spinner>
+            <span>Adding date and location to the photo...</span>
           </div>
         }
 

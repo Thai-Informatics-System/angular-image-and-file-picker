@@ -1832,7 +1832,9 @@ export class AngularImageAndFilePickerComponent implements OnDestroy {
       isMultiple: this.config.isMultiple,
       limit: this.config.limit,
       remainingSlots: (this.config.limit || 10) - this.filesArray.length,
-      isCompressed: this.config.isCompressed
+      isCompressed: this.config.isCompressed,
+      // The phone stamps its camera photos with the same date/time and GPS overlay as this picker's camera
+      captureWatermarkConfig: this.type === 'image' ? (this.captureWatermarkConfig ?? null) : null
     };
 
     this.remoteUploadService.setActiveRequester(this.remoteRequesterId, this.remoteUploadConfig);
