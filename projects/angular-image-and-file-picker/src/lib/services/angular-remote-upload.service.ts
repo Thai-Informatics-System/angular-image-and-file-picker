@@ -73,10 +73,19 @@ export class AngularRemoteUploadService implements OnDestroy {
 
   private destroy$ = new Subject<void>();
   private channelSubscription: Subscription | null = null;
+  private subscribedChannel: string | null = null;
+  private connectionStatusSubscription: Subscription | null = null;
+  private listeningAdapter: AngularSocketAdapter | null = null;
   private healthCheckSubscription: Subscription | null = null;
 
   private config: AngularRemoteUploadConfig | null = null;
   private socketAdapter: AngularSocketAdapter | null = null;
+
+  /**
+   * The picker that last asked the phone for a file (its phone button was pressed). Phone files, the
+   * "waiting" state and the onFileAccept callback belong to it, not to every picker on the page.
+   */
+  private requester: { id: string; config: AngularRemoteUploadConfig | null } | null = null;
 
   // Cached values
   private deviceId: string = '';
@@ -127,27 +136,34 @@ export class AngularRemoteUploadService implements OnDestroy {
       this.apiUrl = this.socketAdapter.getApiUrl?.() || '';
       this.channelName = `tis-mobile-upload-w-dev-${this.deviceId}`;
 
-      // Subscribe to socket connection status
-      this.socketAdapter.connectionStatus$
-        .pipe(takeUntil(this.destroy$))
-        .subscribe(connected => {
-          if (connected) {
-            // Always subscribe to our channel when connected
-            this.subscribeToChannel(this.channelName);
-            
-            // If we have a restored connection, start health check
-            if (this.isConnectedToMobile()) {
-              this.startHealthCheck();
-            }
-          }
-        });
+      // Every picker calls configure(): listen to the socket status once per adapter, otherwise each
+      // reconnect re-subscribes the channel and restarts the health check once per picker.
+      if (this.listeningAdapter !== this.socketAdapter) {
+        this.connectionStatusSubscription?.unsubscribe();
+        this.listeningAdapter = this.socketAdapter;
+        this.connectionStatusSubscription = this.socketAdapter.connectionStatus$
+          .pipe(takeUntil(this.destroy$))
+          .subscribe(connected => {
+            if (connected) {
+              // (Re)subscribe to our channel after every (re)connect
+              this.subscribeToChannel(this.channelName);
 
-      // Subscribe to channel immediately if already connected
+              // If we have a restored connection, start health check
+              if (this.isConnectedToMobile()) {
+                this.startHealthCheck();
+              }
+            }
+          });
+      }
+
+      // Subscribe to channel immediately if already connected (once per channel)
       if (this.socketAdapter.isConnected()) {
-        this.subscribeToChannel(this.channelName);
-        
+        if (!this.channelSubscription || this.subscribedChannel !== this.channelName) {
+          this.subscribeToChannel(this.channelName);
+        }
+
         // If we have a restored connection, start health check
-        if (this.isConnectedToMobile()) {
+        if (this.isConnectedToMobile() && !this.healthCheckSubscription) {
           this.startHealthCheck();
         }
       }
@@ -158,6 +174,30 @@ export class AngularRemoteUploadService implements OnDestroy {
         channel: this.channelName
       });
     }
+  }
+
+  // ===========================================================================
+  // Requesting picker
+  // ===========================================================================
+
+  /**
+   * Called by a picker when its phone button is pressed: the phone's next files, the waiting state and
+   * the onFileAccept callback (from `config`, else the last configure()) belong to that picker.
+   */
+  setActiveRequester(id: string, config?: AngularRemoteUploadConfig | null): void {
+    this.requester = { id, config: config ?? null };
+  }
+
+  /** Called when a picker is destroyed: it can no longer receive files. */
+  releaseRequester(id: string): void {
+    if (this.requester?.id === id) {
+      this.requester = null;
+    }
+  }
+
+  /** Id of the picker that last asked the phone for a file, or null. */
+  getActiveRequesterId(): string | null {
+    return this.requester?.id ?? null;
   }
 
   // ===========================================================================
@@ -443,7 +483,9 @@ export class AngularRemoteUploadService implements OnDestroy {
   }
 
   /**
-   * Send field request to mobile - tells mobile to show upload UI for this field
+   * Send field request to mobile - tells mobile to show upload UI for this field.
+   * Resolves true when the request reached the phone, false when it did not (not paired, phone offline,
+   * API error); the waiting state is already reset then.
    */
   async sendFieldRequest(fieldInfo: {
     label: string;
@@ -455,10 +497,11 @@ export class AngularRemoteUploadService implements OnDestroy {
     limit?: number;
     remainingSlots?: number;
     isCompressed?: boolean;
-  }): Promise<void> {
+  }): Promise<boolean> {
     if (!this.isConnectedToMobile()) {
       console.warn(`[${AngularRemoteUploadService.COMPONENT}] Not connected to mobile, cannot send field request`);
-      return;
+      this.isWaitingForUpload$.next(false);
+      return false;
     }
 
     const mobileDeviceId = this.mobileConnection$.value?.mobileDeviceId;
@@ -481,12 +524,27 @@ export class AngularRemoteUploadService implements OnDestroy {
         field: fieldInfo,
         requestId
       });
+      // The socket answers with { status, body } (or just the body). The backend answers
+      // { success: false } when the phone is not connected: nothing will come, so stop waiting.
+      const body = response?.body ?? response;
+      const failed = (typeof response?.status === 'number' && response.status >= 400) || body?.success === false;
+      if (failed) {
+        console.warn(`[${AngularRemoteUploadService.COMPONENT}] Field request not delivered:`, response);
+        this.isWaitingForUpload$.next(false);
+        this.currentFieldRequest$.next(null);
+        this.error$.next(body?.message || 'Mobile device is not connected');
+        // Refresh the online dots so the dialog shows why
+        this.checkDevicesOnline().catch(() => undefined);
+        return false;
+      }
       console.log(`[${AngularRemoteUploadService.COMPONENT}] Field request sent:`, response);
+      return true;
     } catch (error: any) {
       console.warn(`[${AngularRemoteUploadService.COMPONENT}] Field request failed:`, error);
       // Reset waiting state on error
       this.isWaitingForUpload$.next(false);
       this.currentFieldRequest$.next(null);
+      return false;
     }
   }
 
@@ -590,7 +648,9 @@ export class AngularRemoteUploadService implements OnDestroy {
     this.connectionStatus$.next('disconnected');
     this.pairingSession$.next(null);
     this.clearMobileConnection();
-    
+    this.isWaitingForUpload$.next(false);
+    this.currentFieldRequest$.next(null);
+
     // Stop health check
     this.stopHealthCheck();
   }
@@ -786,6 +846,7 @@ export class AngularRemoteUploadService implements OnDestroy {
 
     console.log(`[${AngularRemoteUploadService.COMPONENT}] Subscribing to channel:`, channel);
 
+    this.subscribedChannel = channel;
     this.channelSubscription = this.socketAdapter.subscribeToChannel(channel)
       .pipe(takeUntil(this.destroy$))
       .subscribe({
@@ -906,7 +967,22 @@ export class AngularRemoteUploadService implements OnDestroy {
    */
   private handleUploadComplete(message: any): void {
     const data = message.data || message.payload || message;
-    
+
+    // Only the paired phone may add files: not after a disconnect, not an older phone still on the page.
+    const paired = this.mobileConnection$.value;
+    if (!paired) {
+      console.warn(`[${AngularRemoteUploadService.COMPONENT}] File from mobile ignored: not paired`);
+      return;
+    }
+    if (data.mobileDeviceId && data.mobileDeviceId !== paired.mobileDeviceId) {
+      console.warn(`[${AngularRemoteUploadService.COMPONENT}] File ignored: from ${data.mobileDeviceId}, paired with ${paired.mobileDeviceId}`);
+      return;
+    }
+
+    // Files go to the picker that asked; its own config decides auto-accept and the callback
+    const requester = this.requester;
+    const config = requester?.config ?? this.config;
+
     // Handle both single file and files array
     const files = data.files || (data.file ? [data.file] : [data]);
 
@@ -927,26 +1003,27 @@ export class AngularRemoteUploadService implements OnDestroy {
           file: normalizedFile,
           mobileDeviceId: data.mobileDeviceId || this.mobileConnection$.value?.mobileDeviceId || 'unknown',
           timestamp: data.timestamp || Date.now(),
-          sessionId: data.sessionId
+          sessionId: data.sessionId,
+          requesterId: requester?.id
         };
 
         // Check if auto-accept is enabled
-        if (this.config?.autoAcceptFiles) {
-          // Auto-accept: emit to remoteUpload$ (component will show in UI and attach to form)
+        if (config?.autoAcceptFiles) {
+          // Auto-accept: emit to remoteUpload$ (the requesting picker shows it and attaches it to the form)
           this.remoteUpload$.next(event);
           console.log(`[${AngularRemoteUploadService.COMPONENT}] File auto-accepted (showing in UI):`, normalizedFile.fileName);
-          
+
           // Call onFileAccept callback if provided
-          if (this.config?.onFileAccept) {
-            this.config.onFileAccept(normalizedFile);
+          if (config?.onFileAccept) {
+            config.onFileAccept(normalizedFile);
           }
         } else {
           // Auto-accept OFF: Only call callback, don't show in UI or attach to form
           console.log(`[${AngularRemoteUploadService.COMPONENT}] File received (not auto-accepting, callback only):`, normalizedFile.fileName);
-          
+
           // Call onFileAccept callback if provided (host app handles display/processing)
-          if (this.config?.onFileAccept) {
-            this.config.onFileAccept(normalizedFile);
+          if (config?.onFileAccept) {
+            config.onFileAccept(normalizedFile);
           }
           // Note: File is NOT added to pending queue or emitted to remoteUpload$
           // The host app's onFileAccept callback is responsible for handling the file
@@ -971,10 +1048,20 @@ export class AngularRemoteUploadService implements OnDestroy {
    */
   private handleMobileDisconnect(data: any): void {
     console.log(`[${AngularRemoteUploadService.COMPONENT}] Mobile disconnected:`, data);
-    
+
+    // An older phone leaving must not end the pairing with the current one
+    const paired = this.mobileConnection$.value;
+    if (paired && data?.mobileDeviceId && data.mobileDeviceId !== paired.mobileDeviceId) {
+      console.log(`[${AngularRemoteUploadService.COMPONENT}] Ignoring disconnect of ${data.mobileDeviceId}, paired with ${paired.mobileDeviceId}`);
+      return;
+    }
+
     this.mobileConnection$.next(null);
     this.connectionStatus$.next('disconnected');
     this.clearMobileConnection();
+    this.isWaitingForUpload$.next(false);
+    this.currentFieldRequest$.next(null);
+    this.stopHealthCheck();
 
     // Update session
     const session = this.pairingSession$.value;

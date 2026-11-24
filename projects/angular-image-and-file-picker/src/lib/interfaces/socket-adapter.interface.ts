@@ -296,6 +296,12 @@ export interface AngularRemoteUploadEvent {
    * Session ID for grouping multiple uploads
    */
   sessionId?: string;
+
+  /**
+   * Internal id of the picker that asked the phone for this file (the last picker whose phone button
+   * was pressed). Pickers ignore events meant for another picker. Undefined when no picker asked.
+   */
+  requesterId?: string;
 }
 
 /**
