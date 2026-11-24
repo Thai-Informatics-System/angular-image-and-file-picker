@@ -22,6 +22,31 @@ export const OVERLAY_POSITIONS: readonly ImageOverlayPosition[] = [
 export const OVERLAY_STACK_GAP = 8;
 export const OVERLAY_LINE_HEIGHT_RATIO = 1.3;
 
+/**
+ * Overlay sizes (font, padding, margin, corner radius) are set for a photo whose long edge is this many pixels
+ * (the desktop camera's 1920 x 1080 capture). Bigger photos - phone cameras take 4000 px and more - scale them
+ * up so the stamp keeps its size relative to the photo; smaller ones keep the set sizes.
+ */
+export const OVERLAY_REFERENCE_EDGE = 1920;
+
+/** Factor for a photo's overlay sizes: 1 up to the reference long edge, proportional above it. */
+export function overlayScale(width: number, height: number): number {
+  const edge = Math.max(width || 0, height || 0);
+  return edge > OVERLAY_REFERENCE_EDGE ? edge / OVERLAY_REFERENCE_EDGE : 1;
+}
+
+/** The style with its pixel sizes multiplied by `scale` (an unset font size stays unset: it already follows the photo width). */
+export function scaleOverlayStyle(style: ResolvedOverlayStyle, scale: number): ResolvedOverlayStyle {
+  if (scale === 1) return style;
+  return {
+    ...style,
+    fontSize: style.fontSize === undefined ? undefined : Math.round(style.fontSize * scale),
+    padding: Math.round(style.padding * scale),
+    margin: Math.round(style.margin * scale),
+    borderRadius: Math.round(style.borderRadius * scale),
+  };
+}
+
 const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
 const LONG_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'] as const;
 const TOKEN_PATTERN = /YYYY|YY|MMMM|MMM|MM|M|DD|D|HH|hh|mm|ss|A/g;

@@ -8,6 +8,8 @@ import type {
 import {
   decodeCapturedImage,
   defaultOverlayFontSize,
+  overlayScale,
+  scaleOverlayStyle,
   formatCaptureDateTime,
   formatCaptureLocation,
   isValidCaptureCoordinate,
@@ -336,8 +338,10 @@ export class ImageCaptureWatermarkService {
     }
 
     try {
-      const dateStyle = prepared.resolved.dateTime.style;
-      const locationStyle = prepared.resolved.location.style;
+      // Sizes are set for a 1920 px photo; a bigger photo (phone camera) gets a proportionally bigger stamp
+      const scale = overlayScale(canvas.width, canvas.height);
+      const dateStyle = scaleOverlayStyle(prepared.resolved.dateTime.style, scale);
+      const locationStyle = scaleOverlayStyle(prepared.resolved.location.style, scale);
       const dateSize = this.fitFont(ctx, prepared.dateLines, dateStyle, canvas.width);
       const locationSize = this.fitFont(ctx, prepared.locationLines, locationStyle, canvas.width);
       const measure = (lines: string[], fontSize: number, fontFamily: string, padding: number) =>

@@ -4,9 +4,11 @@ import {
   formatCaptureDateTime,
   formatCaptureLocation,
   isValidCaptureCoordinate,
+  overlayScale,
   placeCaptureOverlays,
   placeOverlay,
   resolveImageCaptureWatermarkConfig,
+  scaleOverlayStyle,
 } from './image-capture-watermark.logic';
 
 const UTC = '2026-10-31T14:05:06Z';
@@ -322,5 +324,25 @@ describe('decodeCapturedImage', () => {
     await expectAsync(decodeCapturedImage(image)).toBeResolvedTo(bitmap);
     expect(calls[0][1]).toEqual({ imageOrientation: 'from-image' });
     expect(calls[1].length).toBe(1);
+  });
+});
+
+describe('overlay scaling for big photos', () => {
+  const style = { fontSize: 16, fontFamily: 'sans-serif', color: '#fff', backgroundColor: '#000', backgroundOpacity: 0.5, padding: 8, margin: 16, borderRadius: 6 };
+
+  it('keeps the set sizes up to a 1920 px long edge (desktop camera captures)', () => {
+    expect(overlayScale(1920, 1080)).toBe(1);
+    expect(overlayScale(1280, 720)).toBe(1);
+    expect(scaleOverlayStyle(style, 1)).toBe(style);
+  });
+
+  it('scales with the long edge above that, portrait or landscape (phone photos)', () => {
+    expect(overlayScale(3072, 4096)).toBeCloseTo(2.1333, 3);
+    expect(overlayScale(4096, 3072)).toBeCloseTo(2.1333, 3);
+  });
+
+  it('scales font, padding, margin and radius; an unset font size stays unset', () => {
+    expect(scaleOverlayStyle(style, 2)).toEqual({ ...style, fontSize: 32, padding: 16, margin: 32, borderRadius: 12 });
+    expect(scaleOverlayStyle({ ...style, fontSize: undefined }, 2).fontSize).toBeUndefined();
   });
 });
