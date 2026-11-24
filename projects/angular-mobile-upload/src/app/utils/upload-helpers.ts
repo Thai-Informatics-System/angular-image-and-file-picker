@@ -44,9 +44,27 @@ export function acceptsAnything(accept: string | null | undefined): boolean {
   return types.length === 0 || types.some(t => t === '*' || t === '*/*');
 }
 
-/** Value for the file input's `accept` attribute: null (no filter) when everything is allowed. */
+/**
+ * Value for the file input's `accept` attribute: null (no filter) when everything is allowed.
+ * Known extensions also get their MIME type (".jpg" -> "image/jpeg"): phones only open their photo
+ * library (and Android its camera option) for image MIME types, not for a bare ".png,.jpg" list.
+ */
 export function toInputAccept(accept: string | null | undefined): string | null {
-  return acceptsAnything(accept) ? null : accept!.trim();
+  if (acceptsAnything(accept)) return null;
+  const types = new Set<string>();
+  for (const type of accept!.split(',').map(t => t.trim()).filter(Boolean)) {
+    types.add(type);
+    const mime = type.startsWith('.') ? MIME_BY_EXTENSION[type.slice(1).toLowerCase()] : '';
+    if (mime) types.add(mime);
+  }
+  return [...types].join(',');
+}
+
+/** Whether a photo from the phone camera (JPEG) fits the field, i.e. whether to offer "Take Photo". */
+export function acceptsCameraPhoto(accept: string | null | undefined): boolean {
+  if (acceptsAnything(accept)) return true;
+  const types = accept!.toLowerCase().split(',').map(t => t.trim());
+  return types.some(t => t === 'image/*' || t === 'image/jpeg' || t === '.jpg' || t === '.jpeg');
 }
 
 /**
