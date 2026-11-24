@@ -10,8 +10,9 @@ import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { Subject, takeUntil, firstValueFrom } from 'rxjs';
 import { NgxScannerQrcodeComponent, ScannerQRCodeResult } from 'ngx-scanner-qrcode';
 
-import { MobileSocketService, QrCodeParams, ConnectionStatus, DesktopMessage, DevicesOnlineStatus } from '../../services/mobile-socket.service';
+import { MobileSocketService, QrCodeParams, ConnectionStatus, DesktopMessage, DevicesOnlineStatus, SupersededError } from '../../services/mobile-socket.service';
 import { MobileUploadService } from '../../services/mobile-upload.service';
+import { decodeApiUrl, isFileTypeAccepted, resolveMimeType, toInputAccept } from '../../utils/upload-helpers';
 
 @Component({
   selector: 'app-upload',
@@ -65,9 +66,9 @@ export class UploadComponent implements OnInit, OnDestroy, AfterViewChecked {
   // Desktop info received via socket (field configuration)
   readonly desktopFieldInfo = signal<DesktopFieldInfo | null>(null);
   
-  // Computed states
+  // Computed states (upload URLs are fetched on demand when missing, see ensureUploadUrls)
   readonly isConnected = computed(() => this.connectionStatus() === 'connected');
-  readonly isReady = computed(() => this.isConnected() && !this.isInitializing() && !!this.apiUrl() && !!this.uploadUrls());
+  readonly isReady = computed(() => this.isConnected() && !this.isInitializing() && !!this.apiUrl());
 
   // Upload tracking
   readonly totalUploaded = this.uploadService.totalUploaded;
@@ -90,14 +91,14 @@ export class UploadComponent implements OnInit, OnDestroy, AfterViewChecked {
   readonly devicesStatus = signal<DevicesOnlineStatus | null>(null);
   readonly isCheckingStatus = signal(false);
 
-  // Check if previous session exists
-  readonly hasPreviousSession = computed(() => this.socketService.hasStoredSession());
-
   // Track if disconnect was intentional (user-initiated)
   readonly isIntentionalDisconnect = signal(false);
 
   // Track if disconnecting is in progress
   private isDisconnecting = false;
+
+  // Latest error reported by the socket service (shown when it gives up reconnecting)
+  private lastServiceError: string | null = null;
 
   // File type config
   readonly acceptTypes = computed(() => {
@@ -105,10 +106,31 @@ export class UploadComponent implements OnInit, OnDestroy, AfterViewChecked {
     return fieldInfo?.accept || 'image/*,.pdf';
   });
 
+  // `accept` attribute for the file input (null = no filter, e.g. the desktop sent '*')
+  readonly inputAccept = computed(() => toInputAccept(this.acceptTypes()));
+
   readonly uploadType = computed<'image' | 'file'>(() => {
     const fieldInfo = this.desktopFieldInfo();
     return fieldInfo?.type || 'image';
   });
+
+  // Files this field still takes, or null when the desktop sent no limit
+  readonly slotsLeft = computed(() => {
+    const limit = this.desktopFieldInfo()?.limit;
+    return limit === undefined || limit === null ? null : Math.max(0, limit - this.uploadedFiles().length);
+  });
+
+  // Whether the upload button is offered: until the limit, and only once for a single-file field
+  readonly canUploadMore = computed(() => {
+    const slotsLeft = this.slotsLeft();
+    if (slotsLeft !== null && slotsLeft <= 0) return false;
+    return !!this.desktopFieldInfo()?.isMultiple || this.uploadedFiles().length === 0;
+  });
+
+  // Check if previous session exists (reads storage each time: it changes as sessions are saved/cleared)
+  hasPreviousSession(): boolean {
+    return this.socketService.hasStoredSession();
+  }
 
   constructor() {
     // Effect to watch connection status changes
@@ -121,13 +143,22 @@ export class UploadComponent implements OnInit, OnDestroy, AfterViewChecked {
   }
 
   ngOnInit(): void {
+    // Keep the service's latest error so it can be shown when the connection gives up
+    this.socketService.error$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(error => this.lastServiceError = error);
+
     // Subscribe to socket connection status
     this.socketService.connectionStatus$
       .pipe(takeUntil(this.destroy$))
       .subscribe(status => {
         // Ignore status updates if we're in the middle of disconnecting
-        if (!this.isDisconnecting) {
-          this.connectionStatus.set(status);
+        if (this.isDisconnecting) return;
+        this.connectionStatus.set(status);
+        // The service stopped trying (e.g. reconnects exhausted): show the error view with Scan/Retry
+        if (status === 'error') {
+          this.isInitializing.set(false);
+          this.initError.set(this.lastServiceError || 'Connection lost. Please scan the QR code again.');
         }
       });
 
@@ -196,46 +227,62 @@ export class UploadComponent implements OnInit, OnDestroy, AfterViewChecked {
 
   private async initializeFromUrl(): Promise<void> {
     const params = new URLSearchParams(window.location.search);
-    
+
     const token = params.get('token');
     const deviceId = params.get('deviceId');
     const userId = params.get('userId');
-    const apiUrl = params.get('apiUrl');
+    const apiUrl = decodeApiUrl(params.get('apiUrl'));
+    const openScanner = params.has('scan'); // set by the error page's "Scan QR Code Again"
 
-    // Decode apiUrl if present
-    const decodedApiUrl = apiUrl ? decodeURIComponent(apiUrl) : null;
+    // The QR parameters are kept in the stored session from here on. Drop them from the address bar so a
+    // reload (or iOS reloading an evicted tab) doesn't re-exchange an expired link token, or pair with
+    // the first QR code after another one was scanned in the app.
+    if (window.location.search) {
+      window.history.replaceState(window.history.state, '', window.location.pathname + window.location.hash);
+    }
 
     // Check if we have QR params
-    if (token && deviceId && userId && decodedApiUrl) {
-      await this.initializeConnection({
-        token,
-        deviceId,
-        userId,
-        apiUrl: decodedApiUrl
-      });
+    if (token && deviceId && userId && apiUrl) {
+      const qrParams: QrCodeParams = { token, deviceId, userId, apiUrl };
+      // Same QR code as the stored session (e.g. a reload before the address bar was cleaned):
+      // reuse its tokens, the link token itself is only valid for a few minutes
+      if (this.socketService.hasStoredTokensFor(qrParams) && await this.restoreStoredSession()) {
+        return;
+      }
+      await this.initializeConnection(qrParams);
       return;
     }
 
     // Try to restore from stored session
-    if (this.socketService.hasStoredSession()) {
-      console.log('[UploadComponent] Restoring from stored session...');
-      try {
-        this.isInitializing.set(true);
-        this.initError.set(null);
-        
-        await this.socketService.retryFromStoredSession();
-        await this.setConnectionState();
-        this.snackBar.open('Reconnected to desktop!', '', { duration: 2000 });
-        return;
-      } catch (error: any) {
-        console.error('[UploadComponent] Session restore failed:', error);
-        // Fall through to show error
-      }
+    if (this.socketService.hasStoredSession() && await this.restoreStoredSession()) {
+      return;
     }
 
     // No params and no stored session
     this.isInitializing.set(false);
     this.initError.set('Please scan the QR code from the desktop app to connect.');
+    if (openScanner) {
+      this.startScanning();
+    }
+  }
+
+  /** Reconnect with the stored session. Resolves false (showing nothing) when that fails. */
+  private async restoreStoredSession(): Promise<boolean> {
+    console.log('[UploadComponent] Restoring from stored session...');
+    try {
+      this.isInitializing.set(true);
+      this.initError.set(null);
+
+      await this.socketService.retryFromStoredSession();
+      await this.setConnectionState();
+      this.snackBar.open('Reconnected to desktop!', '', { duration: 2000 });
+      return true;
+    } catch (error: any) {
+      // A newer attempt took over: it owns the UI now
+      if (error instanceof SupersededError) return true;
+      console.error('[UploadComponent] Session restore failed:', error);
+      return false;
+    }
   }
 
   private async initializeConnection(params: QrCodeParams): Promise<void> {
@@ -248,6 +295,8 @@ export class UploadComponent implements OnInit, OnDestroy, AfterViewChecked {
       this.snackBar.open('Connected to desktop!', '', { duration: 2000 });
 
     } catch (error: any) {
+      // A newer attempt (retry, scan, reconnect) took over: it owns the UI now
+      if (error instanceof SupersededError) return;
       console.error('[UploadComponent] Initialization failed:', error);
       this.isInitializing.set(false);
       this.initError.set(error.message || 'Failed to connect. Please scan a new QR code.');
@@ -272,11 +321,11 @@ export class UploadComponent implements OnInit, OnDestroy, AfterViewChecked {
 
     switch (message.type) {
       case 'mobile-link-established':
-        // Mobile link established - connection is ready
+        // Mobile link established - connection is ready (also after an automatic reconnect)
         this.connectionStatus.set('connected');
-        this.isInitializing.set(false);
         this.initError.set(null); // Clear any error state
         this.isIntentionalDisconnect.set(false); // Reset disconnect flag
+        void this.setConnectionState(); // device IDs + API URL, ends the "Connecting..." state
         this.snackBar.open('Connected to desktop!', '', { duration: 2000 });
         // Fetch upload URLs from backend
         this.fetchUploadUrls();
@@ -320,8 +369,10 @@ export class UploadComponent implements OnInit, OnDestroy, AfterViewChecked {
             entityType: field.entityType,
             entityId: field.entityId,
             isMultiple: field.isMultiple,
-            limit: field.remainingSlots || field.limit,
-            isCompressed: field.isCompressed
+            // remainingSlots 0 means the field is full (older desktops send only limit)
+            limit: field.remainingSlots ?? field.limit,
+            isCompressed: field.isCompressed,
+            requestId: message['requestId']
           });
           this.snackBar.open(`Upload requested: ${field.label}`, '', { duration: 3000 });
         }
@@ -330,12 +381,17 @@ export class UploadComponent implements OnInit, OnDestroy, AfterViewChecked {
       case 'field-request-cancel':
         // Desktop cancelled the field request
         this.desktopFieldInfo.set(null);
+        this.uploadedFiles.set([]);
         this.snackBar.open('Upload request cancelled', '', { duration: 2000 });
         break;
 
       case 'session-ended':
+        // The desktop ended the pairing: stop the socket and forget the session so nothing reconnects
+        this.isDisconnecting = true;
+        this.socketService.endSession();
+        this.uploadService.clearUploads();
         this.snackBar.open('Session ended by desktop', '', { duration: 3000 });
-        this.router.navigate(['/error'], { queryParams: { type: 'session-expired' } });
+        this.router.navigate(['/error'], { queryParams: { type: 'session-expired' }, replaceUrl: true });
         break;
 
       case 'file-received':
@@ -351,15 +407,16 @@ export class UploadComponent implements OnInit, OnDestroy, AfterViewChecked {
 
   /**
    * Fetch upload URLs from backend via socket API
-   * Called after mobile-link-established
+   * Called after mobile-link-established, and again on upload if that failed
    */
   private async fetchUploadUrls(): Promise<void> {
     try {
       console.log('[UploadComponent] Fetching upload URLs from backend...');
-      
+
+      // Read the IDs from the service: the signals are not set yet when the link is first established
       const response = await this.socketService.callApiViaSocketPromise('tis-image-mobile-uploader/get-upload-urls', {
-        mobileDeviceId: this.mobileDeviceId(),
-        desktopDeviceId: this.desktopDeviceId()
+        mobileDeviceId: await this.socketService.getMobileDeviceId(),
+        desktopDeviceId: this.socketService.getDesktopDeviceId()
       });
 
       console.log('[UploadComponent] Upload URLs response:', response);
@@ -397,57 +454,66 @@ export class UploadComponent implements OnInit, OnDestroy, AfterViewChecked {
 
     const fieldInfo = this.desktopFieldInfo();
     const currentCount = this.uploadedFiles().length;
-    const limit = fieldInfo?.limit;
+    const limit = fieldInfo?.limit; // what the field still takes (remainingSlots)
 
     let files = Array.from(input.files);
-    
+
     // Validate file types against accept types
     const acceptTypes = this.acceptTypes();
     if (acceptTypes) {
-      const invalidFiles = files.filter(file => !this.isFileTypeAccepted(file, acceptTypes));
+      const invalidFiles = files.filter(file => !isFileTypeAccepted(file, acceptTypes));
       if (invalidFiles.length > 0) {
         this.snackBar.open(
-          `Invalid file type(s). Accepted: ${acceptTypes}`, 
-          '', 
+          `Invalid file type(s). Accepted: ${acceptTypes}`,
+          '',
           { duration: 4000 }
         );
         input.value = '';
         return;
       }
     }
-    
+
     // Enforce limit if specified
     if (limit !== undefined && limit !== null) {
       const remaining = limit - currentCount;
-      
+
       if (remaining <= 0) {
-        this.snackBar.open(`Upload limit reached (${limit} file${limit !== 1 ? 's' : ''})`, '', { duration: 3000 });
+        this.snackBar.open('No more files can be added to this field', '', { duration: 3000 });
         input.value = '';
         return;
       }
-      
+
       if (files.length > remaining) {
         files = files.slice(0, remaining);
-        this.snackBar.open(`Only ${remaining} more file${remaining !== 1 ? 's' : ''} allowed (limit: ${limit})`, '', { duration: 4000 });
+        this.snackBar.open(`Only ${remaining} more file${remaining !== 1 ? 's' : ''} allowed`, '', { duration: 4000 });
       }
     }
-    
+
     for (const file of files) {
-      await this.uploadFile(file);
+      // Stop when the desktop cancelled or replaced the request meanwhile
+      if (this.desktopFieldInfo() !== fieldInfo) break;
+      await this.uploadFile(file, fieldInfo);
     }
 
     // Clear input for next selection
     input.value = '';
   }
 
-  private async uploadFile(file: File): Promise<void> {
+  /** Make sure the presigned-URL endpoints are known (retries the fetch when it failed on connect). */
+  private async ensureUploadUrls(): Promise<UploadUrls | null> {
+    if (!this.uploadUrls()) {
+      await this.fetchUploadUrls();
+    }
+    return this.uploadUrls();
+  }
+
+  /**
+   * Upload one file to S3 and hand it to the desktop.
+   * @param fieldInfo the field request the file was picked for
+   */
+  private async uploadFile(file: File, fieldInfo: DesktopFieldInfo | null): Promise<void> {
     if (!this.apiUrl()) {
       this.snackBar.open('Not connected to server', '', { duration: 2000 });
-      return;
-    }
-
-    if (!this.uploadUrls()) {
-      this.snackBar.open('Upload configuration not ready', '', { duration: 2000 });
       return;
     }
 
@@ -455,26 +521,32 @@ export class UploadComponent implements OnInit, OnDestroy, AfterViewChecked {
     this.uploadProgress.set(0);
 
     try {
+      const urls = await this.ensureUploadUrls();
+      if (!urls) {
+        return; // fetchUploadUrls already told the user
+      }
+
+      // Some Android pickers leave file.type empty: guess it from the extension
+      const mimeType = resolveMimeType(file);
+
       // Determine which endpoint to use based on file type
-      const isImage = this.isImageFile(file.type);
+      const isImage = this.isImageFile(mimeType);
       const uploadType = this.uploadType();
-      const urls = this.uploadUrls()!;
-      
+
       // Use type from desktop field config if available, otherwise detect from file
-      const endpoint = (uploadType === 'image' || isImage) 
-        ? urls.imagePresignedUrlGenerator 
+      const endpoint = (uploadType === 'image' || isImage)
+        ? urls.imagePresignedUrlGenerator
         : urls.filePresignedUrlGenerator;
 
       console.log('[UploadComponent] Using upload endpoint:', endpoint, 'for type:', uploadType, 'isImage:', isImage);
 
       // Get entityType from desktop field info
-      const fieldInfo = this.desktopFieldInfo();
       const entityType = fieldInfo?.entityType;
 
       // Step 1: Get presigned upload URL
       const requestBody: any = {
         filename: file.name,
-        mimeType: file.type
+        mimeType
       };
 
       // Add entityType if available
@@ -498,27 +570,31 @@ export class UploadComponent implements OnInit, OnDestroy, AfterViewChecked {
         throw new Error('Failed to get upload URL');
       }
 
-      // Step 2: Upload to S3
-      await this.uploadToS3(uploadData.uploadURL, file);
+      // Step 2: Upload to S3 (same Content-Type as the presigned URL was signed for)
+      await this.uploadToS3(uploadData.uploadURL, file, mimeType);
+
+      // The desktop cancelled or replaced the request while this was uploading: don't attach it there
+      if (this.desktopFieldInfo() !== fieldInfo) {
+        this.snackBar.open('The desktop changed the upload request, so this file was not sent.', '', { duration: 4000 });
+        return;
+      }
 
       // Step 3: Create uploaded file record
       const uploadedFile: UploadedFile = {
         s3Url: uploadData.resourceUrl,
         fileName: file.name,
-        mimeType: file.type,
+        mimeType,
         size: file.size,
-        uploadData: uploadData
+        uploadData: uploadData,
+        requestId: fieldInfo?.requestId,
+        status: 'sending'
       };
 
       // Add to local list
       this.uploadedFiles.update(files => [...files, uploadedFile]);
 
       // Step 4: Send to desktop via API
-      console.log('[UploadComponent] 🔵 Calling sendToDesktop with:', uploadedFile);
-      await this.uploadService.sendToDesktop(uploadedFile);
-      console.log('[UploadComponent] ✅ sendToDesktop completed');
-
-      this.snackBar.open('File sent to desktop!', '', { duration: 2000 });
+      await this.deliverToDesktop(uploadedFile);
 
     } catch (error: any) {
       console.error('[UploadComponent] Upload failed:', error);
@@ -529,11 +605,36 @@ export class UploadComponent implements OnInit, OnDestroy, AfterViewChecked {
     }
   }
 
-  private uploadToS3(uploadUrl: string, file: File): Promise<void> {
+  /** Send an uploaded file to the desktop and record whether it got there. */
+  private async deliverToDesktop(file: UploadedFile): Promise<void> {
+    this.setFileStatus(file.s3Url, 'sending');
+    try {
+      console.log('[UploadComponent] 🔵 Calling sendToDesktop with:', file);
+      await this.uploadService.sendToDesktop(file);
+      console.log('[UploadComponent] ✅ sendToDesktop completed');
+      this.setFileStatus(file.s3Url, 'sent');
+      this.snackBar.open('File sent to desktop!', '', { duration: 2000 });
+    } catch (error: any) {
+      this.setFileStatus(file.s3Url, 'failed', error?.message);
+      this.snackBar.open('Uploaded, but not delivered to the desktop. Tap Resend to try again.', '', { duration: 4000 });
+    }
+  }
+
+  /** Resend a file the desktop did not get (it is already in S3; the desktop ignores duplicates). */
+  async resendFile(file: UploadedFile): Promise<void> {
+    if (file.status === 'sending') return;
+    await this.deliverToDesktop(file);
+  }
+
+  private setFileStatus(s3Url: string, status: UploadedFile['status'], error?: string): void {
+    this.uploadedFiles.update(files => files.map(f => f.s3Url === s3Url ? { ...f, status, error } : f));
+  }
+
+  private uploadToS3(uploadUrl: string, file: File, mimeType: string): Promise<void> {
     return new Promise((resolve, reject) => {
       this.http.put(uploadUrl, file, {
         headers: {
-          'Content-Type': file.type
+          'Content-Type': mimeType
         },
         reportProgress: true,
         observe: 'events'
@@ -542,15 +643,17 @@ export class UploadComponent implements OnInit, OnDestroy, AfterViewChecked {
       ).subscribe({
         next: (event) => {
           if (event.type === HttpEventType.UploadProgress) {
-            const progress = event.total 
-              ? Math.round((event.loaded / event.total) * 100) 
+            const progress = event.total
+              ? Math.round((event.loaded / event.total) * 100)
               : 0;
             this.uploadProgress.set(progress);
           } else if (event.type === HttpEventType.Response) {
             resolve();
           }
         },
-        error: (err) => reject(err)
+        error: (err) => reject(err),
+        // Stopped before a response (page left): settle instead of hanging
+        complete: () => reject(new Error('Upload cancelled'))
       });
     });
   }
@@ -578,6 +681,8 @@ export class UploadComponent implements OnInit, OnDestroy, AfterViewChecked {
       await this.setConnectionState();
       this.snackBar.open('Reconnected to desktop!', '', { duration: 2000 });
     } catch (error: any) {
+      // A newer attempt took over: it owns the UI now
+      if (error instanceof SupersededError) return;
       console.error('[UploadComponent] Retry connection failed:', error);
       this.isInitializing.set(false);
       this.initError.set(error.message || 'Failed to reconnect. Please scan a new QR code.');
@@ -694,38 +799,6 @@ export class UploadComponent implements OnInit, OnDestroy, AfterViewChecked {
 
   isImageFile(mimeType: string): boolean {
     return mimeType.startsWith('image/');
-  }
-
-  /**
-   * Validate if file type is accepted based on accept string
-   * Supports MIME types, wildcards (image/*, video/*), and extensions (.pdf, .jpg)
-   */
-  isFileTypeAccepted(file: File, acceptString: string): boolean {
-    if (!acceptString) return true;
-
-    const fileName = file.name.toLowerCase();
-    const mimeType = file.type.toLowerCase();
-    const acceptTypes = acceptString.toLowerCase().split(',').map(t => t.trim());
-
-    return acceptTypes.some(acceptType => {
-      // Handle wildcard MIME types (e.g., image/*, video/*)
-      if (acceptType.includes('/*')) {
-        const [category] = acceptType.split('/');
-        return mimeType.startsWith(category + '/');
-      }
-      
-      // Handle specific MIME types (e.g., image/jpeg, application/pdf)
-      if (acceptType.includes('/')) {
-        return mimeType === acceptType;
-      }
-      
-      // Handle file extensions (e.g., .pdf, .jpg)
-      if (acceptType.startsWith('.')) {
-        return fileName.endsWith(acceptType);
-      }
-      
-      return false;
-    });
   }
 
   /**
@@ -911,7 +984,7 @@ export class UploadComponent implements OnInit, OnDestroy, AfterViewChecked {
         const apiUrl = url.searchParams.get('apiUrl');
         
         if (token && deviceId && userId && apiUrl) {
-          return { token, deviceId, userId, apiUrl: decodeURIComponent(apiUrl) };
+          return { token, deviceId, userId, apiUrl: decodeApiUrl(apiUrl) };
         }
       }
       
@@ -969,8 +1042,11 @@ interface DesktopFieldInfo {
   entityType?: string;
   entityId?: any;
   isMultiple?: boolean;
+  /** Files the field still takes (the desktop's remainingSlots, else its limit) */
   limit?: number;
   isCompressed?: boolean;
+  /** The desktop's field request id, sent back with each file */
+  requestId?: string;
 }
 
 interface UploadUrls {
@@ -1008,4 +1084,8 @@ interface UploadedFile {
   mimeType: string;
   size: number;
   uploadData?: any;
+  requestId?: string;
+  /** Delivery to the desktop: 'failed' offers a Resend */
+  status: 'sending' | 'sent' | 'failed';
+  error?: string;
 }

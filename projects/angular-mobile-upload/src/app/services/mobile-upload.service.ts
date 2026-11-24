@@ -14,6 +14,12 @@ export interface UploadedFileData {
   title?: string;
   name?: string;
   filename?: string;
+  /** Original file name, MIME type and size (the desktop reads these keys) */
+  fileName?: string;
+  mimeType?: string;
+  size?: number;
+  /** The desktop's field request this file answers (lets newer desktops route it to the right field) */
+  requestId?: string;
   s3Path?: string;
   id?: any;
   uploadData?: {
@@ -83,51 +89,49 @@ export class MobileUploadService {
   // ---------------------------------------------------------------------------
 
   /**
-   * Send uploaded file data to desktop via API
-   * Called when the library's onUploaded event fires
-   * 
-   * @param uploadedData - The data from library's onUploaded event
+   * Send uploaded file data to desktop via API.
+   * Rejects when the desktop did not get it (socket down, desktop not connected, timeout),
+   * so the caller can show the failure and offer a resend.
+   *
+   * @param uploadedData - One uploaded file or an array of them
    */
   async sendToDesktop(uploadedData: any): Promise<void> {
     console.log('[MobileUploadService] 🔵 sendToDesktop called with:', uploadedData);
-    
+
+    // Normalize the data (single file or array)
+    const files = this.normalizeUploadedData(uploadedData);
+
+    if (files.length === 0) {
+      console.warn('[MobileUploadService] No files to send');
+      return;
+    }
+
+    const payload = {
+      mobileDeviceId: await this.socketService.getMobileDeviceId(),
+      desktopDeviceId: this.socketService.getDesktopDeviceId(),
+      channel: this.socketService.getChannelName(),
+      files,
+      totalCount: files.length,
+      uploadedAt: Date.now()
+    };
+
+    console.log('[MobileUploadService] 🔵 Sending payload to socket:', payload);
+
     try {
-      // Normalize the data (library can emit single file or array)
-      const files = this.normalizeUploadedData(uploadedData);
-      
-      if (files.length === 0) {
-        console.warn('[MobileUploadService] No files to send');
-        return;
-      }
-
-      console.log('[MobileUploadService] 🔵 Normalized files:', files);
-
-      // Store locally
-      this._uploadedFiles.update(current => [...current, ...files]);
-
-      const payload = {
-        mobileDeviceId: await this.socketService.getMobileDeviceId(),
-        desktopDeviceId: this.socketService.getDesktopDeviceId(),
-        channel: this.socketService.getChannelName(),
-        files,
-        totalCount: files.length,
-        uploadedAt: Date.now()
-      };
-
-      console.log('[MobileUploadService] 🔵 Sending payload to socket:', payload);
-
       // Send to desktop via API call
       await this.socketService.callApiViaSocketPromise('tis-image-mobile-uploader/file-uploaded', payload);
-
-      this._lastSentAt.set(Date.now());
-      this._sendError.set(null);
-
-      console.log('[MobileUploadService] ✅ Successfully sent to desktop');
-
     } catch (error: any) {
       console.error('[MobileUploadService] ❌ Failed to send to desktop:', error);
-      this._sendError.set(error.message || 'Failed to send to desktop');
+      this._sendError.set(error?.message || 'Failed to send to desktop');
+      throw error;
     }
+
+    // Only count files the desktop actually got
+    this._uploadedFiles.update(current => [...current, ...files]);
+    this._lastSentAt.set(Date.now());
+    this._sendError.set(null);
+
+    console.log('[MobileUploadService] ✅ Successfully sent to desktop');
   }
 
   /**
@@ -157,9 +161,13 @@ export class MobileUploadService {
     return {
       s3Url: item.s3Url || item.tempS3Url || item.uploadData?.resourceUrl || item.resourceUrl || item.url,
       tempId: item.tempId,
-      title: item.title || item.name || item.filename,
-      name: item.name || item.title,
-      filename: item.filename || item.name,
+      title: item.title || item.name || item.filename || item.fileName,
+      name: item.name || item.title || item.fileName,
+      filename: item.filename || item.name || item.fileName,
+      fileName: item.fileName || item.filename || item.name,
+      mimeType: item.mimeType,
+      size: item.size,
+      requestId: item.requestId,
       s3Path: item.s3Path || item.uploadData?.uploadPath,
       id: item.id,
       uploadData: item.uploadData ? {

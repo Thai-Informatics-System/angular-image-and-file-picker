@@ -2,7 +2,8 @@
   <!-- Hidden file input -->
   <input 
     type="file" 
-    #fileInput 
+    #fileInput
+    [attr.accept]="inputAccept()"
     [attr.multiple]="desktopFieldInfo()?.isMultiple ? true : null"
     (change)="onFileSelected($event)" 
     style="display: none;" 
@@ -165,20 +166,29 @@
           </div>
 
           <!-- Instruction Message and Upload Button -->
-          @if (isReady() && !isUploading() && uploadedFiles().length === 0) {
-            <div class="instruction-message">
-              <mat-icon>info</mat-icon>
-              <span>
-                Tap the button below to select files. They will be uploaded and sent to your desktop.
-              </span>
-            </div>
+          @if (isReady() && !isUploading()) {
+            @if (canUploadMore()) {
+              @if (uploadedFiles().length === 0) {
+                <div class="instruction-message">
+                  <mat-icon>info</mat-icon>
+                  <span>
+                    Tap the button below to select files. They will be uploaded and sent to your desktop.
+                  </span>
+                </div>
+              }
 
-            <div class="upload-section">
-              <button mat-raised-button color="primary" class="upload-btn" (click)="openFileSelector()">
-                <mat-icon>{{ uploadType() === 'image' ? 'add_photo_alternate' : 'upload_file' }}</mat-icon>
-                <span>{{ uploadType() === 'image' ? 'Select Images' : 'Select Files' }}</span>
-              </button>
-            </div>
+              <div class="upload-section">
+                <button mat-raised-button color="primary" class="upload-btn" (click)="openFileSelector()">
+                  <mat-icon>{{ uploadType() === 'image' ? 'add_photo_alternate' : 'upload_file' }}</mat-icon>
+                  <span>{{ uploadedFiles().length > 0 ? 'Add More' : (uploadType() === 'image' ? 'Select Images' : 'Select Files') }}</span>
+                </button>
+              </div>
+            } @else if (uploadedFiles().length === 0) {
+              <div class="instruction-message">
+                <mat-icon>info</mat-icon>
+                <span>This field is full. Remove a file on the desktop to add another.</span>
+              </div>
+            }
           }
         } @else {
           <!-- Waiting for desktop to send field info -->
@@ -213,9 +223,19 @@
                   }
                   <div class="file-info">
                     <span class="file-name">{{ file.fileName }}</span>
-                    <span class="file-size">{{ formatFileSize(file.size) }}</span>
+                    <span class="file-size">{{ file.status === 'failed' ? 'Not delivered to the desktop' : formatFileSize(file.size) }}</span>
                   </div>
-                  <mat-icon class="sent-icon">check_circle</mat-icon>
+                  @switch (file.status) {
+                    @case ('sent') {
+                      <mat-icon class="sent-icon">check_circle</mat-icon>
+                    }
+                    @case ('sending') {
+                      <mat-spinner diameter="20"></mat-spinner>
+                    }
+                    @case ('failed') {
+                      <button mat-stroked-button color="warn" class="resend-btn" (click)="resendFile(file)">Resend</button>
+                    }
+                  }
                 </div>
               }
             </div>

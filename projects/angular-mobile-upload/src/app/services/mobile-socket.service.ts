@@ -1,8 +1,8 @@
 import { Injectable, OnDestroy, inject } from '@angular/core';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
-import { BehaviorSubject, Subject, Observable, firstValueFrom } from 'rxjs';
+import { BehaviorSubject, Subject, Observable, firstValueFrom, throwError } from 'rxjs';
 import { take, timeout, catchError } from 'rxjs/operators';
-import { FingerprintService } from './fingerprint.service';
+import { decodeApiUrl } from '../utils/upload-helpers';
 
 // =============================================================================
 // Types
@@ -42,8 +42,20 @@ export interface StoredSession {
   socketUrl?: string;
   accessToken?: string;
   refreshToken?: string;
+  /** Local-clock time (ms) the access token expires, see `localExpiryOf`. */
+  accessTokenExpiresAt?: number;
   mobileDeviceId?: string;
   storedAt: number;
+}
+
+/**
+ * Rejection for a connect/link attempt that a newer attempt (retry, QR scan, reconnect) or a
+ * disconnect replaced. Whoever replaced it owns the connection now, so callers just ignore it.
+ */
+export class SupersededError extends Error {
+  constructor() {
+    super('Connection attempt superseded');
+  }
 }
 
 /**
@@ -125,19 +137,20 @@ export class MobileSocketService implements OnDestroy {
   private static readonly LEGACY_STORAGE_KEY = 'tis-mobile-session';
   private static readonly SESSION_TTL = 24 * 60 * 60 * 1000; // 24 hours
   private static readonly TOKEN_EXPIRY_BUFFER = 60 * 1000; // 1 minute buffer before expiry
+  private static readonly DEVICE_ID_KEY = 'angular-mobile-device-id';
 
   private readonly http = inject(HttpClient);
-  private readonly fingerprintService = inject(FingerprintService);
 
   // Configuration
   private qrParams: QrCodeParams | null = null;
-  private mobileDeviceId: string = '';
+  private mobileDeviceId: string = this.loadOrCreateMobileDeviceId();
   private desktopDeviceId: string = '';
   private userId: string = '';
   private apiUrl: string = '';
   private socketUrl: string = '';
   private accessToken: string = '';
   private refreshToken: string = '';
+  private accessTokenExpiresAt = 0;
   private channelName: string = '';
 
   // Socket
@@ -182,43 +195,48 @@ export class MobileSocketService implements OnDestroy {
   private isTransitioning = false;
   private stateTransitionQueue: ConnectionState[] = [];
 
-  // Mobile device ID initialization
-  private mobileDeviceIdInitialized: Promise<void> | null = null;
-
-  constructor() {
-    this.initializeMobileDeviceId();
-  }
+  // Attempts still waiting on the current socket; closeSocket() cancels them (SupersededError)
+  private pendingConnectReject: ((error: Error) => void) | null = null;
+  private pendingLinkCancel: (() => void) | null = null;
 
   // ===========================================================================
   // Initialization
   // ===========================================================================
 
   /**
-   * Initialize mobile device ID using fingerprint
+   * Mobile device ID: a random UUID kept in localStorage, so it is the same across reloads and tabs.
+   * An ID already stored (or the one of a stored session from an older app version) is kept.
    */
-  private async initializeMobileDeviceId(): Promise<void> {
-    if (this.mobileDeviceIdInitialized) {
-      return this.mobileDeviceIdInitialized;
-    }
-
-    this.mobileDeviceIdInitialized = (async () => {
-      try {
-        this.mobileDeviceId = await this.fingerprintService.getTabFingerprint();
-        console.log(`[${MobileSocketService.COMPONENT}] Mobile Device ID:`, this.mobileDeviceId);
-      } catch (e) {
-        // Fallback
-        this.mobileDeviceId = `mobile_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+  private loadOrCreateMobileDeviceId(): string {
+    try {
+      const existing =
+        localStorage.getItem(MobileSocketService.DEVICE_ID_KEY) || this.getStoredSession()?.mobileDeviceId;
+      if (existing) {
+        localStorage.setItem(MobileSocketService.DEVICE_ID_KEY, existing);
+        return existing;
       }
-    })();
+    } catch { }
 
-    return this.mobileDeviceIdInitialized;
+    const id = crypto.randomUUID?.() || this.fallbackUUID();
+    try {
+      localStorage.setItem(MobileSocketService.DEVICE_ID_KEY, id);
+    } catch { }
+    return id;
+  }
+
+  /** UUID v4 for browsers without crypto.randomUUID (iOS < 15.4, non-HTTPS). */
+  private fallbackUUID(): string {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+      const r = Math.random() * 16 | 0;
+      const v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
   }
 
   /**
    * Get mobile device ID
    */
   async getMobileDeviceId(): Promise<string> {
-    await this.initializeMobileDeviceId();
     return this.mobileDeviceId;
   }
 
@@ -278,28 +296,22 @@ export class MobileSocketService implements OnDestroy {
   async initialize(params: QrCodeParams): Promise<void> {
     console.log(`[${MobileSocketService.COMPONENT}] Initializing with params:`, params);
 
-    // Clear any old session data to avoid conflicts
-    // This ensures we always use the desktop device ID from the new QR code
-    this.clearStoredSession();
+    // Drop any previous socket, reconnect timer and pending attempt before pairing with this QR code
+    this.cleanup();
 
     // Store params
     this.qrParams = params;
     this.desktopDeviceId = params.deviceId;
     this.userId = params.userId;
-    this.apiUrl = decodeURIComponent(params.apiUrl);
+    this.apiUrl = decodeApiUrl(params.apiUrl);
     this.channelName = `tis-mobile-upload-w-dev-${params.deviceId}`;
 
-    // Ensure we have mobile device ID
-    if (!this.mobileDeviceId) {
-      await this.initializeMobileDeviceId();
-    }
-
-    // Save to localStorage for retry
+    // Save to localStorage for retry (replaces the previous session: the new QR code wins)
     this.saveSession({
       token: params.token,
       deviceId: params.deviceId,
       userId: params.userId,
-      apiUrl: params.apiUrl,
+      apiUrl: this.apiUrl,
       mobileDeviceId: this.mobileDeviceId,
       storedAt: Date.now()
     });
@@ -307,24 +319,28 @@ export class MobileSocketService implements OnDestroy {
     this._error$.next(null);
     this.reconnectAttempts = 0;
 
-    try {
+    await this.failOnError(async () => {
       // Step 1: Get tokens from API
       await this.fetchTokens(params.token);
 
-      // Step 2: Connect to WebSocket
-      await this.connect();
+      // Step 2: Connect to WebSocket (the tokens were just issued: no expiry check)
+      await this.connect(false);
 
       // Step 3: Establish link with desktop
       await this.establishMobileUploadLink();
 
       console.log(`[${MobileSocketService.COMPONENT}] Initialization complete!`);
+    });
+  }
 
-    } catch (error: any) {
-      console.error(`[${MobileSocketService.COMPONENT}] Initialization failed:`, error);
-      this.transitionTo('ERROR');
-      this._error$.next(error.message || 'Initialization failed');
-      throw error;
-    }
+  /**
+   * True when the stored session already holds tokens for this QR code (same link token and desktop),
+   * so a reload can reconnect with them instead of exchanging the (possibly expired) link token again.
+   */
+  hasStoredTokensFor(params: Pick<QrCodeParams, 'token' | 'deviceId'>): boolean {
+    const stored = this.getStoredSession();
+    return !!stored?.accessToken && !!stored.socketUrl &&
+      stored.token === params.token && stored.deviceId === params.deviceId;
   }
 
   /**
@@ -340,21 +356,24 @@ export class MobileSocketService implements OnDestroy {
     if (stored.accessToken && stored.socketUrl) {
       this.desktopDeviceId = stored.deviceId;
       this.userId = stored.userId;
-      this.apiUrl = stored.apiUrl;
+      this.apiUrl = decodeApiUrl(stored.apiUrl);
       this.socketUrl = stored.socketUrl;
       this.accessToken = stored.accessToken;
       this.refreshToken = stored.refreshToken || '';
+      this.accessTokenExpiresAt = stored.accessTokenExpiresAt || 0;
       this.channelName = `tis-mobile-upload-w-dev-${stored.deviceId}`;
-      
-      // Restore mobileDeviceId from stored session, or initialize if not available
+
+      // Keep the device ID the desktop was paired with
       if (stored.mobileDeviceId) {
         this.mobileDeviceId = stored.mobileDeviceId;
-      } else if (!this.mobileDeviceId) {
-        await this.initializeMobileDeviceId();
       }
+      this._error$.next(null);
+      this.reconnectAttempts = 0;
 
-      await this.connect();
-      await this.establishMobileUploadLink();
+      await this.failOnError(async () => {
+        await this.connect();
+        await this.establishMobileUploadLink();
+      });
     } else {
       // Re-initialize with stored params
       await this.initialize({
@@ -363,6 +382,23 @@ export class MobileSocketService implements OnDestroy {
         userId: stored.userId,
         apiUrl: stored.apiUrl
       });
+    }
+  }
+
+  /**
+   * Run a connect attempt; on failure stop everything it started (so nothing reconnects behind the
+   * error screen), report ERROR and rethrow. A superseded attempt is rethrown untouched.
+   */
+  private async failOnError(attempt: () => Promise<void>): Promise<void> {
+    try {
+      await attempt();
+    } catch (error: any) {
+      if (error instanceof SupersededError) throw error;
+      console.error(`[${MobileSocketService.COMPONENT}] Connection attempt failed:`, error);
+      this.cleanup();
+      this._error$.next(error?.message || 'Initialization failed');
+      this.transitionTo('ERROR');
+      throw error;
     }
   }
 
@@ -406,6 +442,7 @@ export class MobileSocketService implements OnDestroy {
 
       this.accessToken = response.accessToken;
       this.refreshToken = response.refreshToken;
+      this.accessTokenExpiresAt = this.localExpiryOf(response.accessToken);
       this.socketUrl = response.socketUrl;
 
       // Update stored session with tokens
@@ -415,6 +452,7 @@ export class MobileSocketService implements OnDestroy {
           ...stored,
           accessToken: this.accessToken,
           refreshToken: this.refreshToken,
+          accessTokenExpiresAt: this.accessTokenExpiresAt,
           socketUrl: this.socketUrl,
           mobileDeviceId: await this.getMobileDeviceId()
         });
@@ -450,16 +488,30 @@ export class MobileSocketService implements OnDestroy {
   }
 
   /**
-   * Check if JWT token is expired or about to expire
+   * Local-clock time (ms) a just-received token expires: its lifetime (exp - iat) counted from now,
+   * so a phone clock that is off does not matter. 0 when the token has no exp/iat.
+   */
+  private localExpiryOf(token: string): number {
+    const payload = this.decodeJwtPayload(token);
+    if (!payload?.exp || !payload?.iat) return 0;
+    return Date.now() + (payload.exp - payload.iat) * 1000;
+  }
+
+  /**
+   * Check if JWT token is expired or about to expire.
+   * Uses the receipt-based expiry when known, else the token's exp against the phone clock.
    */
   private isTokenExpired(token: string): boolean {
-    const payload = this.decodeJwtPayload(token);
-    if (!payload || !payload.exp) {
-      // If we can't decode or no exp claim, assume expired
-      return true;
+    let expiryTime = token === this.accessToken ? this.accessTokenExpiresAt : 0;
+    if (!expiryTime) {
+      const payload = this.decodeJwtPayload(token);
+      if (!payload || !payload.exp) {
+        // If we can't decode or no exp claim, assume expired
+        return true;
+      }
+      expiryTime = payload.exp * 1000; // Convert to milliseconds
     }
 
-    const expiryTime = payload.exp * 1000; // Convert to milliseconds
     const now = Date.now();
     const isExpired = now >= (expiryTime - MobileSocketService.TOKEN_EXPIRY_BUFFER);
     
@@ -504,7 +556,8 @@ export class MobileSocketService implements OnDestroy {
       }
 
       this.accessToken = response.accessToken;
-      
+      this.accessTokenExpiresAt = this.localExpiryOf(response.accessToken);
+
       // Update refresh token if provided
       if (response.refreshToken) {
         this.refreshToken = response.refreshToken;
@@ -516,7 +569,8 @@ export class MobileSocketService implements OnDestroy {
         this.saveSession({
           ...stored,
           accessToken: this.accessToken,
-          refreshToken: this.refreshToken
+          refreshToken: this.refreshToken,
+          accessTokenExpiresAt: this.accessTokenExpiresAt
         });
       }
 
@@ -560,15 +614,20 @@ export class MobileSocketService implements OnDestroy {
   // ===========================================================================
 
   /**
-   * Connect to WebSocket
+   * Connect to WebSocket. Replaces any previous socket (and cancels attempts still waiting on it).
+   * @param checkToken false right after fetchTokens: the tokens were just issued
    */
-  private async connect(): Promise<void> {
-    // Ensure mobileDeviceId is available
+  private async connect(checkToken = true): Promise<void> {
+    // A pending reconnect timer must not start a second socket alongside this one
+    this.clearReconnectTimer();
+
     const deviceId = await this.getMobileDeviceId();
 
     // Validate and refresh token if needed before connecting
-    await this.validateAndRefreshToken();
-    
+    if (checkToken) {
+      await this.validateAndRefreshToken();
+    }
+
     return new Promise((resolve, reject) => {
       this.transitionTo('CONNECTING');
 
@@ -576,7 +635,7 @@ export class MobileSocketService implements OnDestroy {
         reject(new Error('Socket URL not available'));
         return;
       }
-      
+
       if (!deviceId) {
         reject(new Error('Mobile device ID not available'));
         return;
@@ -590,33 +649,80 @@ export class MobileSocketService implements OnDestroy {
       console.log(`[${MobileSocketService.COMPONENT}] Connecting to WebSocket with deviceId:`, deviceId);
 
       try {
-        this.socket = new WebSocket(url.toString());
+        // Only one socket at a time (done here, synchronously, so two racing connect() calls can't both keep one)
+        this.closeSocket();
+        const socket = new WebSocket(url.toString());
+        this.socket = socket;
+        this.pendingConnectReject = reject;
+        let opened = false;
 
-        this.socket.onopen = () => {
+        socket.onopen = () => {
           console.log(`[${MobileSocketService.COMPONENT}] WebSocket connected`);
-          this.reconnectAttempts = 0;
+          opened = true;
+          this.pendingConnectReject = null;
           this.startHeartbeat();
           resolve();
         };
 
-        this.socket.onmessage = (event) => {
+        socket.onmessage = (event) => {
           this.handleMessage(event.data);
         };
 
-        this.socket.onerror = (error) => {
+        socket.onerror = (error) => {
           console.error(`[${MobileSocketService.COMPONENT}] WebSocket error:`, error);
-          reject(new Error('WebSocket connection failed'));
+          if (!opened) {
+            this.pendingConnectReject = null;
+            reject(new Error('WebSocket connection failed'));
+          }
         };
 
-        this.socket.onclose = (event) => {
+        socket.onclose = (event) => {
           console.log(`[${MobileSocketService.COMPONENT}] WebSocket closed:`, event.code, event.reason);
+          if (!opened) {
+            // Never opened: the caller of connect() handles the failure (and any retry)
+            this.pendingConnectReject = null;
+            reject(new Error('WebSocket connection failed'));
+            return;
+          }
           this.handleDisconnect(event.code);
         };
 
       } catch (error) {
+        this.pendingConnectReject = null;
         reject(error);
       }
     });
+  }
+
+  /**
+   * Detach and close the current socket so its late events (close, messages) can't reach us or
+   * start a reconnect, and cancel any connect/link attempt still waiting on it.
+   */
+  private closeSocket(): void {
+    const rejectConnect = this.pendingConnectReject;
+    const cancelLink = this.pendingLinkCancel;
+    this.pendingConnectReject = null;
+    this.pendingLinkCancel = null;
+    rejectConnect?.(new SupersededError());
+    cancelLink?.();
+
+    const socket = this.socket;
+    if (!socket) return;
+    this.socket = null;
+    socket.onopen = null;
+    socket.onmessage = null;
+    socket.onerror = null;
+    socket.onclose = null;
+    try {
+      socket.close(1000, 'Client disconnect');
+    } catch { }
+  }
+
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimeoutId) {
+      clearTimeout(this.reconnectTimeoutId);
+      this.reconnectTimeoutId = null;
+    }
   }
 
   /**
@@ -633,35 +739,45 @@ export class MobileSocketService implements OnDestroy {
     // Set up the response listener BEFORE making the API call
     // This ensures we don't miss the mobile-link-established message
     const connectionPromise = new Promise<void>((resolve, reject) => {
+      // Every way out (link up, desktop disconnect, timeout, superseded) clears the timer and the listener
+      const finish = (error?: Error) => {
+        clearTimeout(timeout);
+        sub.unsubscribe();
+        if (this.pendingLinkCancel === cancel) this.pendingLinkCancel = null;
+        if (error) {
+          reject(error);
+        } else {
+          resolve();
+        }
+      };
+      const cancel = () => finish(new SupersededError());
+      this.pendingLinkCancel = cancel;
+
       const timeout = setTimeout(() => {
         console.warn(`[${MobileSocketService.COMPONENT}] Connection timeout - desktop did not respond in 30s`);
-        reject(new Error('Desktop did not respond. Please ensure the desktop app is open.'));
+        finish(new Error('Desktop did not respond. Please ensure the desktop app is open.'));
       }, 30000);
 
       const sub = this._desktopMessages$.subscribe(msg => {
         // Handle mobile-link-established from backend (via desktop channel)
         if (msg.type === 'mobile-link-established') {
           console.log(`[${MobileSocketService.COMPONENT}] ✅ Mobile link established`);
-          clearTimeout(timeout);
-          sub.unsubscribe();
+          this.reconnectAttempts = 0;
           this.transitionTo('CONNECTED');
-          resolve();
+          finish();
         }
         // Also handle legacy SUCCESS response
-        if (msg.type === 'connectionState' && (msg.state === 'SUCCESS' || msg.connectionState === 'SUCCESS')) {
+        else if (msg.type === 'connectionState' && (msg.state === 'SUCCESS' || msg.connectionState === 'SUCCESS')) {
           console.log(`[${MobileSocketService.COMPONENT}] ✅ Connection confirmed (legacy)`);
-          clearTimeout(timeout);
-          sub.unsubscribe();
+          this.reconnectAttempts = 0;
           this.transitionTo('CONNECTED');
-          resolve();
+          finish();
         }
         // Handle disconnect from desktop
-        if (msg.type === 'mobile-link-disconnected' || msg.type === 'disconnect') {
+        else if (msg.type === 'mobile-link-disconnected' || msg.type === 'disconnect') {
           console.log(`[${MobileSocketService.COMPONENT}] Desktop disconnected`);
-          clearTimeout(timeout);
-          sub.unsubscribe();
+          finish(new Error('Desktop disconnected the session.'));
           this.handleRemoteDisconnect();
-          reject(new Error('Desktop disconnected the session.'));
         }
       });
     });
@@ -697,33 +813,20 @@ export class MobileSocketService implements OnDestroy {
    */
   private handleRemoteDisconnect(): void {
     console.log(`[${MobileSocketService.COMPONENT}] Handling remote disconnect...`);
-    this.cleanup();
-    this.clearStoredSession();
-    this.transitionTo('DISCONNECTED');
+    this.endSession();
     this._error$.next('Connection was ended by the desktop app.');
   }
 
   /**
-   * Disconnect from desktop - call API and clear local state
+   * End the session locally (desktop ended it, or the user disconnected): close the socket without
+   * reconnecting and forget the stored session and tokens, so nothing can pair again by itself.
    */
-  async disconnectFromDesktop(): Promise<void> {
-    console.log(`[${MobileSocketService.COMPONENT}] Disconnecting from desktop...`);
-
-    try {
-      // Call disconnect API
-      await this.callApiViaSocketPromise('tis-image-mobile-uploader/disconnect-mobile-link', {
-        mobileDeviceId: await this.getMobileDeviceId(),
-        desktopDeviceId: this.desktopDeviceId,
-        initiatedBy: 'mobile'
-      });
-    } catch (error: any) {
-      console.warn(`[${MobileSocketService.COMPONENT}] Disconnect API call failed:`, error);
-      // Continue with local cleanup anyway
-    }
-
-    // Clear local state
+  endSession(): void {
     this.cleanup();
     this.clearStoredSession();
+    this.accessToken = '';
+    this.refreshToken = '';
+    this.accessTokenExpiresAt = 0;
     this.transitionTo('DISCONNECTED');
   }
 
@@ -768,8 +871,14 @@ export class MobileSocketService implements OnDestroy {
       if (parsed.channel === this.channelName || 
           (Array.isArray(parsed.channel) && parsed.channel.includes(this.channelName))) {
         const message: DesktopMessage = parsed.data || parsed.payload || parsed;
-        console.log(`[${MobileSocketService.COMPONENT}] ✅ Desktop message received:`, message);
-        this._desktopMessages$.next(message);
+        // The backend sends upload-channel messages to every socket of the user, so another phone (or an
+        // older pairing) linked to the same desktop gets them too: skip those addressed to a different phone.
+        if (message?.['mobileDeviceId'] && message['mobileDeviceId'] !== this.mobileDeviceId) {
+          console.log(`[${MobileSocketService.COMPONENT}] Ignoring desktop message for another phone:`, message.type);
+        } else {
+          console.log(`[${MobileSocketService.COMPONENT}] ✅ Desktop message received:`, message);
+          this._desktopMessages$.next(message);
+        }
       }
       // Note: Other channels (API responses, subscribe confirmations, welcome) are handled by channel routing below
 
@@ -920,15 +1029,21 @@ export class MobileSocketService implements OnDestroy {
    * Call API via socket - returns Observable for the response
    */
   callApiViaSocket(url: string, body: any = null): Observable<any> {
+    // A message sent on a closed socket is silently lost: fail now instead of waiting for a timeout
+    if (!this.isSocketOpen()) {
+      console.warn(`[${MobileSocketService.COMPONENT}] Socket not connected, not sending:`, url);
+      return throwError(() => new Error('Not connected to the server. Please wait for the connection to come back and try again.'));
+    }
     const socketBodyPayload = { route: url, body };
-    this.verifyConnectionStatus();
     this.sendRawMessage({ action: 'api', data: socketBodyPayload });
     const channel = this.subscribeToChannel(url, true);
     return channel.data$.asObservable();
   }
 
   /**
-   * Call API via socket - returns Promise for convenience
+   * Call API via socket - returns Promise for convenience.
+   * Rejects on a non-200 status and on a 200 whose body says `success: false`
+   * (e.g. file-uploaded answers that when the desktop is not connected).
    */
   callApiViaSocketPromise(url: string, body: any = null): Promise<any> {
     return new Promise((resolve, reject) => {
@@ -939,8 +1054,9 @@ export class MobileSocketService implements OnDestroy {
       this.callApiViaSocket(url, body).pipe(take(1)).subscribe({
         next: (response) => {
           clearTimeout(timeout);
-          if (response.status === 200 || response.statusCode === 200) {
-            resolve(response.payload || response.body || response);
+          const result = response.payload || response.body || response;
+          if ((response.status === 200 || response.statusCode === 200) && result?.success !== false) {
+            resolve(result);
           } else {
             reject(new Error(response.message || response.body?.message || 'API call failed'));
           }
@@ -948,18 +1064,18 @@ export class MobileSocketService implements OnDestroy {
         error: (err) => {
           clearTimeout(timeout);
           reject(err);
+        },
+        // The channel was closed (disconnect/cleanup) before any response arrived
+        complete: () => {
+          clearTimeout(timeout);
+          reject(new Error('Connection closed before the server answered'));
         }
       });
     });
   }
 
-  /**
-   * Verify connection status before sending
-   */
-  private verifyConnectionStatus(): void {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      console.warn(`[${MobileSocketService.COMPONENT}] Socket not connected, message may not be delivered`);
-    }
+  private isSocketOpen(): boolean {
+    return !!this.socket && this.socket.readyState === WebSocket.OPEN;
   }
 
   // ===========================================================================
@@ -977,7 +1093,9 @@ export class MobileSocketService implements OnDestroy {
         // Check if pong received from last ping (before sending new one)
         if (now - this.lastPongReceived > 45000) {
           console.warn(`[${MobileSocketService.COMPONENT}] No pong received in 45s, reconnecting...`);
-          this.socket?.close();
+          // A dead link may never deliver a close event: drop the socket and reconnect right away
+          this.closeSocket();
+          this.handleDisconnect(4000);
           return;
         }
 
@@ -1094,8 +1212,8 @@ export class MobileSocketService implements OnDestroy {
         this.callApiViaSocket('ping', { timestamp: Date.now() }).pipe(take(1)).subscribe({
           next: () => {
             console.log(`[${MobileSocketService.COMPONENT}] Immediate ping sent, rechecking status...`);
-            // Recheck status after a short delay
-            setTimeout(() => this.checkDevicesOnline(), 1000);
+            // Recheck status after a short delay (unless the health check was stopped meanwhile)
+            setTimeout(() => this.healthCheckInterval && this.checkDevicesOnline(), 1000);
           },
           error: (err: any) => {
             console.warn(`[${MobileSocketService.COMPONENT}] Immediate ping failed:`, err);
@@ -1144,14 +1262,16 @@ export class MobileSocketService implements OnDestroy {
   }
 
   private handleDisconnect(code: number): void {
+    // An ended session (user disconnect, desktop ended it) must never reconnect by itself
+    if (this.connectionState === 'DISCONNECTED') return;
+
     this._connectionStatus$.next('disconnected');
     this.stopHeartbeat();
 
     if (this.reconnectAttempts < this.maxReconnectAttempts) {
       this.scheduleReconnect();
     } else {
-      this.transitionTo('ERROR');
-      this._error$.next('Connection lost. Please scan QR code again.');
+      this.giveUpReconnecting();
     }
   }
 
@@ -1162,19 +1282,28 @@ export class MobileSocketService implements OnDestroy {
     const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts - 1), 30000);
     console.log(`[${MobileSocketService.COMPONENT}] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
 
+    this.clearReconnectTimer();
     this.reconnectTimeoutId = setTimeout(async () => {
+      this.reconnectTimeoutId = null;
       try {
         await this.connect();
         await this.establishMobileUploadLink();
       } catch (err) {
+        // A newer attempt (user retry, QR scan) or a disconnect took over: leave it to that one
+        if (err instanceof SupersededError || this.connectionState === 'DISCONNECTED') return;
         if (this.reconnectAttempts < this.maxReconnectAttempts) {
           this.scheduleReconnect();
         } else {
-          this.transitionTo('ERROR');
-          this._error$.next('Connection lost. Please scan QR code again.');
+          this.giveUpReconnecting();
         }
       }
     }, delay);
+  }
+
+  private giveUpReconnecting(): void {
+    this.cleanup();
+    this._error$.next('Connection lost. Please scan QR code again.');
+    this.transitionTo('ERROR');
   }
 
   // ===========================================================================
@@ -1333,26 +1462,16 @@ export class MobileSocketService implements OnDestroy {
       }
     }
 
-    this.cleanup();
-    this.clearStoredSession();
-    this.transitionTo('DISCONNECTED');
+    this.endSession();
   }
 
   private cleanup(): void {
     this.stopHeartbeat();
     this.stopHealthCheck();
+    this.clearReconnectTimer();
 
-    if (this.reconnectTimeoutId) {
-      clearTimeout(this.reconnectTimeoutId);
-      this.reconnectTimeoutId = null;
-    }
-
-    if (this.socket) {
-      try {
-        this.socket.close(1000, 'Client disconnect');
-      } catch {}
-      this.socket = null;
-    }
+    // Detached close: no close event, so no reconnect (and pending attempts are cancelled)
+    this.closeSocket();
 
     // Close all channel subscriptions
     this.activeChannelSubscriptions.forEach((info, channelName) => {
