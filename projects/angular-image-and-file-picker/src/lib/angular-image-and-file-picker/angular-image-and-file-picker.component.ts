@@ -6,6 +6,7 @@ import { BehaviorSubject, Observable, Subject, Subscription, map, sequenceEqual,
 import { MatDialog } from '@angular/material/dialog';
 import { BreakpointObserver, Breakpoints } from '@angular/cdk/layout';
 import { AngularHelperService } from '../services/angular-helper.service';
+import { downloadFileFromUrl } from '../services/file-download';
 import { AngularConfirmationDialogComponent } from '../angular-confirmation-dialog/angular-confirmation-dialog.component';
 import { AngularQrCodeDialogComponent, AngularQrCodeDialogData } from '../angular-qr-code-dialog/angular-qr-code-dialog.component';
 import { AngularViewConnectionDialogComponent } from '../angular-view-connection-dialog/angular-view-connection-dialog.component';
@@ -1155,63 +1156,8 @@ export class AngularImageAndFilePickerComponent implements OnDestroy {
   }
 
   async downloadFile(url: string, fileName: string) {
-    try {
-      // First try with fetch
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/octet-stream',
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const blob = await response.blob();
-      
-      // Check if blob has content
-      if (blob.size === 0) {
-        throw new Error('File is empty or could not be fetched');
-      }
-
-      // Create download link
-      const blobUrl = URL.createObjectURL(blob);
-      const el = document.createElement("a");
-      el.href = blobUrl;
-      el.download = fileName;
-      el.style.display = 'none';
-      
-      // Add to DOM, click, and remove
-      document.body.appendChild(el);
-      el.click();
-      document.body.removeChild(el);
-      
-      // Cleanup blob URL
-      setTimeout(() => {
-        URL.revokeObjectURL(blobUrl);
-      }, 100);
-
-    } catch (error) {
-      console.error("Fetch download failed, trying alternative method:", error);
-      
-      // Fallback: Try direct link opening
-      try {
-        const el = document.createElement("a");
-        el.href = url;
-        el.download = fileName;
-        el.target = '_blank';
-        el.style.display = 'none';
-        
-        document.body.appendChild(el);
-        el.click();
-        document.body.removeChild(el);
-        
-      } catch (fallbackError) {
-        console.error("All download methods failed:", fallbackError);
-        this.helper.showErrorMsg("Failed to download file. Please try again or contact support.", 'Error', 5000);
-      }
-    }
+    if (!url) return;
+    await downloadFileFromUrl(url, fileName);
   }
 
   clickTimeout: any = null;

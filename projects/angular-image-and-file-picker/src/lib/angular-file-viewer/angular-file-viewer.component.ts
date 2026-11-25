@@ -2,6 +2,7 @@ import { Component, Inject, ViewChild } from '@angular/core';
 import { MatDialogRef, MAT_DIALOG_DATA } from '@angular/material/dialog';
 import { DomSanitizer } from '@angular/platform-browser';
 import type { FileViewerDialogData } from '../interfaces';
+import { downloadFileFromUrl } from '../services/file-download';
 import { AngularPdfViewerComponent } from './angular-pdf-viewer/angular-pdf-viewer.component';
 
 @Component({
@@ -36,12 +37,7 @@ export class AngularFileViewerComponent {
   }
 
   downloadFile() {
-    var el = document.createElement("a");
-    el.setAttribute("href", this.safeUrl);
-    el.setAttribute("download", 'Video-' + new Date().valueOf());
-    document.body.appendChild(el);
-    el.click();
-    el.remove();
+    downloadFileFromUrl(this.safeUrl);
   }
 
   onClose(status: boolean | null): void {
